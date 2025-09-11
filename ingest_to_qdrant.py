@@ -13,6 +13,8 @@ FILES = [
     ("gsheets_corpus.csv", "sheet"),           # LinkedIn + Instagram rows from your 2 Sheets
     ("google_docs_corpus.csv", "gdoc"),        # Website + Newsletter docs
     ("instagram_hashtags.csv", "instagram_hashtags"),  # extracted hashtags (optional)
+    # ("linkedin_posts_corpus.csv", "linkedin"),  # LinkedIn posts (optional)
+    ("notion_export_corpus.csv", "notion"),    # Notion pages (optional)
 ]
 
 BATCH = 64
