@@ -3,18 +3,34 @@ import os
 import time
 import random
 from typing import Any, Dict, List, Optional
-from openai import OpenAI
+
 import requests
 from dotenv import load_dotenv
 
+# -----------------------------------------------------------------------------
+# Env & constants
+# -----------------------------------------------------------------------------
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set. Put it in back/.env")
 
-_client = OpenAI(api_key=OPENAI_API_KEY, http_client=None)
+# Use ONLY the REST endpoints to avoid SDK .responses attribute issues
+BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+WEB_MODEL = os.getenv("WEB_MODEL", "gpt-4o-mini")  # use chat completions
+CHAT_FALLBACK_MODEL = os.getenv("CHAT_FALLBACK_MODEL", WEB_MODEL)
+EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")  # 1536 dims
+
+_DEFAULT_HEADERS = {
+    "Authorization": f"Bearer {OPENAI_API_KEY}",
+    "Content-Type": "application/json",
+}
+
+# -----------------------------------------------------------------------------
+# Small helpers
+# -----------------------------------------------------------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
     v = (os.getenv(name) or "").strip().lower()
     if v in ("1", "true", "yes", "on"):
@@ -26,171 +42,57 @@ def _env_bool(name: str, default: bool = False) -> bool:
 def _parse_domains(s: str) -> List[str]:
     return [d.strip() for d in (s or "").split(",") if d.strip()]
 
-def _gather_urls_from_response_dict(d: Any) -> List[str]:
-    """Walk the response dict to collect any cited/source URLs."""
-    urls = []
-    if isinstance(d, dict):
-        for k, v in d.items():
-            if k == "url" and isinstance(v, str) and v.startswith("http"):
-                urls.append(v)
-            else:
-                urls.extend(_gather_urls_from_response_dict(v))
-    elif isinstance(d, list):
-        for item in d:
-            urls.extend(_gather_urls_from_response_dict(item))
-    return urls
-
-def web_answer_updated(question: str, allowed_domains: list[str] | None = None) -> dict:
-    """
-    Web search with enforced brief-style formatting (no links in body).
-    The server sanitizes again, but we nudge the model too.
-    """
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    model = os.getenv("WEB_MODEL", "gpt-4.1-mini")
-
-    # Domain scoping hint (kept in-text for broad model compatibility)
-    scoped_q = question
-    if allowed_domains:
-        domain_clause = " OR ".join([f"site:{d}" for d in allowed_domains])
-        scoped_q = f"{question}\n\nSearch constraint: ({domain_clause})"
-
-    formatting_rules = (
-        "You are a crisp news/analysis formatter. Use the web_search tool to gather facts, "
-        "then respond in clean markdown with this structure:\n\n"
-        "### Title\n"
-        "- one concise headline-like line\n\n"
-        "### Key points\n"
-        "- 3–6 punchy bullets capturing the main takeaways\n\n"
-        "### What changed & why\n"
-        "One or two compact paragraphs explaining drivers and implications. Avoid fluff.\n\n"
-        "### What to watch next (optional)\n"
-        "- 2–4 bullets on risks, next data releases, or policy decisions (include only if useful)\n\n"
-        "Important rules:\n"
-        "- Do NOT include any URLs, raw links, or bracketed citations in the body. "
-        "Return plain text only; the client will print links separately.\n"
-        "- Keep numbers/dates specific (e.g., 'August 2025', '0.1% m/m').\n"
-        "- Prefer neutral, non-sensational tone."
-    )
-
-    resp = client.responses.create(
-        model=model,
-        tools=[{"type": "web_search"}],
-        instructions=formatting_rules,
-        input=[{
-            "role": "user",
-            "content": [{"type": "input_text", "text": scoped_q}]
-        }],
-        include=["web_search_call.action.sources"],
-    )
-
-    # Extract text + sources
-    out_text = ""
-    sources: List[str] = []
-    for item in getattr(resp, "output", []) or []:
-        if getattr(item, "type", None) == "message":
-            for block in getattr(item, "content", []) or []:
-                if getattr(block, "type", None) == "output_text":
-                    out_text += block.text
-        if getattr(item, "citations", None):
-            for c in item.citations:
-                if getattr(c, "url", None):
-                    sources.append(c.url)
-
-    # Fallback (older SDKs): parse from dict to collect any source URLs
-    if not sources:
-        try:
-            resp_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
-        except Exception:
-            resp_dict = getattr(resp, "model_dump", lambda: {})()
-        sources = list(dict.fromkeys(_gather_urls_from_response_dict(resp_dict)))
-
-    return {"text": (out_text or "").strip(), "sources": list(dict.fromkeys(sources))}
-
-def web_answer(
-    question: str,
-    allowed_domains: Optional[List[str]] = None,
-    context_size: Optional[str] = None,  # "low" | "medium" | "high"
-    location: Optional[Dict[str, str]] = None,
-    model: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Legacy helper (kept for compatibility). Uses Responses API with web_search and returns:
-      { "text": <answer string>, "sources": [<urls>] }
-    """
-    if not _env_bool("ENABLE_WEB_SEARCH", True):
-        return {"text": "Web search is disabled.", "sources": []}
-
-    model = model or (os.getenv("WEB_MODEL") or "gpt-4.1-mini")
-    context_size = context_size or (os.getenv("WEB_CONTEXT_SIZE") or "medium")
-    allowed_domains = allowed_domains or _parse_domains(os.getenv("WEB_ALLOWED_DOMAINS", ""))
-
-    tool_cfg: Dict[str, Any] = {"type": "web_search"}
-    if allowed_domains:
-        tool_cfg["filters"] = {"allowed_domains": allowed_domains}
-
-    loc = location or {}
-    if not loc:
-        country = (os.getenv("WEB_LOCATION_COUNTRY") or "").strip()
-        city = (os.getenv("WEB_LOCATION_CITY") or "").strip()
-        region = (os.getenv("WEB_LOCATION_REGION") or "").strip()
-        if country or city or region:
-            tool_cfg["user_location"] = {
-                "type": "approximate",
-                **({"country": country} if country else {}),
-                **({"city": city} if city else {}),
-                **({"region": region} if region else {}),
-            }
-
-    tool_cfg["search_context_size"] = context_size
-
-    resp = _client.responses.create(
-        model=model,
-        tools=[tool_cfg],
-        tool_choice="auto",
-        include=["web_search_call.action.sources"],
-        input=question,
-    )
-
-    text = resp.output_text if hasattr(resp, "output_text") else ""
-
-    try:
-        resp_dict = resp.to_dict() if hasattr(resp, "to_dict") else resp
-    except Exception:
-        resp_dict = getattr(resp, "model_dump", lambda: {})()
-
-    urls = list(dict.fromkeys(_gather_urls_from_response_dict(resp_dict)))
-    return {"text": text.strip(), "sources": urls}
-
-BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-
-_DEFAULT_HEADERS = {
-    "Authorization": f"Bearer {OPENAI_API_KEY}",
-    "Content-Type": "application/json",
-}
-
 def _headers():
     return _DEFAULT_HEADERS
 
 def _post_with_retry(url: str, json_payload: dict, timeout: int = 120, max_retries: int = 3):
     backoff = 1.5
+    last = None
     for i in range(max_retries):
         r = requests.post(url, headers=_headers(), json=json_payload, timeout=timeout)
         if r.status_code in (429, 500, 502, 503, 504):
+            last = r
             if i < max_retries - 1:
                 time.sleep(backoff ** (i + 1))
                 continue
         r.raise_for_status()
         return r
-    r.raise_for_status()
-    return r
+    if last is not None:
+        last.raise_for_status()
+    raise RuntimeError("Request failed after retries")
 
+# -----------------------------------------------------------------------------
+# Embeddings (REST)
+# -----------------------------------------------------------------------------
 def embed_text(text: str):
     """Get a vector embedding for the given text (text-embedding-3-small, 1536 dims)."""
     url = f"{BASE_URL}/embeddings"
-    payload = {"model": "text-embedding-3-small", "input": text}
+    payload = {"model": EMBED_MODEL, "input": text}
     r = _post_with_retry(url, payload, timeout=60)
     return r.json()["data"][0]["embedding"]
 
+# -----------------------------------------------------------------------------
+# Chat core (REST), reused by chat_answer + "web" formatters
+# -----------------------------------------------------------------------------
+def _chat_complete(
+    messages: List[Dict[str, str]],
+    model: Optional[str] = None,
+    temperature: float = 0.2,
+    timeout: int = 120,
+) -> str:
+    url = f"{BASE_URL}/chat/completions"
+    payload = {
+        "model": model or CHAT_FALLBACK_MODEL,
+        "temperature": temperature,
+        "messages": messages,
+    }
+    r = _post_with_retry(url, payload, timeout=timeout)
+    data = r.json()
+    return (data["choices"][0]["message"]["content"] or "").strip()
+
+# -----------------------------------------------------------------------------
+# Grounded chat (uses only provided context)
+# -----------------------------------------------------------------------------
 _CLOSERS = [
     "Would you like a quick example from the dataset?",
     "Want me to expand on one point?",
@@ -198,7 +100,6 @@ _CLOSERS = [
     "Want this summarized even shorter?",
     "Shall I compare this with another channel?",
 ]
-
 def _closer():
     return random.choice(_CLOSERS)
 
@@ -216,24 +117,79 @@ def chat_answer(context: str, question: str, temperature: float = 0.2) -> str:
         "- For comparisons or strategies, use short paragraphs.\n"
         "- Keep it concise; no raw URLs or a 'Sources:' block."
     )
-
     user = f"Question: {question}\n\nContext (use this to answer; if it's not enough, say you don't know):\n{context}"
 
-    url = f"{BASE_URL}/chat/completions"
-    payload = {
-        "model": "gpt-4o-mini",
-        "temperature": temperature,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    }
-
-    r = _post_with_retry(url, payload, timeout=120)
-    msg = (r.json()["choices"][0]["message"]["content"] or "").strip()
+    msg = _chat_complete(
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=CHAT_FALLBACK_MODEL,
+        temperature=temperature,
+    )
 
     c = _closer()
     if c not in msg:
         msg = (msg + "\n\n" + c).strip()
-
     return msg
+
+# -----------------------------------------------------------------------------
+# "Web answer" formatters (no live web search; clean markdown + no links)
+# -----------------------------------------------------------------------------
+def _web_style_prompt(question: str, allowed_domains: Optional[List[str]]) -> str:
+    domain_hint = ""
+    if allowed_domains:
+        # non-enforced hint for the model; server still sanitizes
+        domain_clause = " OR ".join([f"site:{d}" for d in allowed_domains])
+        domain_hint = f"\n\n(When relevant, consider sources like: {domain_clause})"
+
+    formatting_rules = (
+        "Format the answer as clean markdown with:\n"
+        "### Title\n"
+        "- one concise headline-like line\n\n"
+        "### Key points\n"
+        "- 3–6 punchy bullets capturing the main takeaways\n\n"
+        "### What changed & why\n"
+        "One or two compact paragraphs explaining drivers and implications.\n\n"
+        "### What to watch next (optional)\n"
+        "- 2–4 bullets on risks, next data releases, or policy decisions (only if useful)\n\n"
+        "Important rules:\n"
+        "- Do NOT include any URLs, raw links, or bracketed citations in the body.\n"
+        "- Keep numbers/dates specific (e.g., 'August 2025', '0.1% m/m').\n"
+        "- Neutral, non-sensational tone.\n"
+    )
+    return f"{formatting_rules}\nUser question:\n{question}{domain_hint}"
+
+def web_answer_updated(question: str, allowed_domains: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Formerly used Responses + web_search. We now produce a clean, link-free
+    analysis via Chat Completions (no web tool), and return empty sources.
+    """
+    system = "You are a crisp news/analysis formatter. Return ONLY the formatted answer. No links."
+    prompt = _web_style_prompt(question, allowed_domains)
+    text = _chat_complete(
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        model=WEB_MODEL,
+        temperature=0.2,
+    )
+    return {"text": (text or "").strip(), "sources": []}
+
+def web_answer(
+    question: str,
+    allowed_domains: Optional[List[str]] = None,
+    context_size: Optional[str] = None,  # kept for signature compatibility
+    location: Optional[Dict[str, str]] = None,  # kept for signature compatibility
+    model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Legacy helper (kept for compatibility). Returns:
+      { "text": <answer string>, "sources": [] }
+    """
+    if not _env_bool("ENABLE_WEB_SEARCH", True):
+        return {"text": "Web search is disabled.", "sources": []}
+
+    system = "You are concise and factual. Return ONLY the formatted answer. No links or citations."
+    prompt = _web_style_prompt(question, allowed_domains)
+    text = _chat_complete(
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        model=model or WEB_MODEL,
+        temperature=0.2,
+    )
+    return {"text": (text or "").strip(), "sources": []}
