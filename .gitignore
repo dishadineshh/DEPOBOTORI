@@ -1,0 +1,15 @@
+# Backend
+back/.venv/
+back/__pycache__/
+back/keys/
+
+# Frontend
+front/node_modules/
+front/build/
+
+# General
+.env
+
+# C:\Users\Admin\Downloads\DataDepotORI\front\.gitignore
+node_modules/
+build/
