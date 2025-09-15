@@ -53,6 +53,27 @@ GA_CSV = DATA_DIR / "ga_metrics.csv"
 # ---------------------------
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
+# add near your other routes
+@app.get("/")
+def home():
+    return (
+        """
+        <html>
+          <head><title>DataDepot API</title></head>
+          <body style="font-family: system-ui; max-width: 700px; margin: 40px auto; line-height:1.5">
+            <h1>DataDepot API is live ✅</h1>
+            <p>Try these endpoints:</p>
+            <ul>
+              <li><code>GET /status</code></li>
+              <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
+            </ul>
+          </body>
+        </html>
+        """,
+        200,
+        {"Content-Type": "text/html"},
+    )
+
 
 def _sanitize_answer_format(text: str, max_bullets: int = 5):
     """
