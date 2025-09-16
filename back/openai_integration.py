@@ -19,7 +19,7 @@ if not OPENAI_API_KEY:
 # Use ONLY the REST endpoints to avoid SDK .responses attribute issues
 BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
-WEB_MODEL = os.getenv("WEB_MODEL", "gpt-4o-mini")  # use chat completions
+WEB_MODEL = os.getenv("WEB_MODEL", "gpt-4o-mini")  # chat completions
 CHAT_FALLBACK_MODEL = os.getenv("CHAT_FALLBACK_MODEL", WEB_MODEL)
 EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")  # 1536 dims
 
@@ -29,7 +29,7 @@ _DEFAULT_HEADERS = {
 }
 
 # -----------------------------------------------------------------------------
-# Small helpers
+# Helpers
 # -----------------------------------------------------------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
     v = (os.getenv(name) or "").strip().lower()
@@ -72,7 +72,7 @@ def embed_text(text: str):
     return r.json()["data"][0]["embedding"]
 
 # -----------------------------------------------------------------------------
-# Chat core (REST), reused by chat_answer + "web" formatters
+# Chat core (REST) — reused by chat_answer + Asana/web formatters
 # -----------------------------------------------------------------------------
 def _chat_complete(
     messages: List[Dict[str, str]],
@@ -131,7 +131,7 @@ def chat_answer(context: str, question: str, temperature: float = 0.2) -> str:
     return msg
 
 # -----------------------------------------------------------------------------
-# "Web answer" formatters (no live web search; clean markdown + no links)
+# "Web answer" style (no live web search; just clean, link-free formatting)
 # -----------------------------------------------------------------------------
 def _web_style_prompt(question: str, allowed_domains: Optional[List[str]]) -> str:
     domain_hint = ""

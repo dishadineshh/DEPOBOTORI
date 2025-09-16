@@ -9,12 +9,11 @@ from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# Load .env from this folder (back/.env) before other imports that read env
+# Load .env (back/.env)
 ENV_PATH = Path(__file__).with_name(".env")
 load_dotenv(dotenv_path=ENV_PATH)
-print(f"[boot] WEB_MODEL={os.getenv('WEB_MODEL')}, WEB_ALLOWED_DOMAINS={os.getenv('WEB_ALLOWED_DOMAINS')}")
 
-# Optional sanity logging
+print(f"[boot] WEB_MODEL={os.getenv('WEB_MODEL')}, WEB_ALLOWED_DOMAINS={os.getenv('WEB_ALLOWED_DOMAINS')}")
 k = (os.getenv("QDRANT_API_KEY") or "").strip()
 print(f"[boot] QDRANT_URL={os.getenv('QDRANT_URL')}")
 print(f"[boot] QDRANT_API_KEY prefix={k[:8]} len={len(k)}")
@@ -22,8 +21,26 @@ print(f"[boot] QDRANT_API_KEY prefix={k[:8]} len={len(k)}")
 from openai_integration import embed_text, chat_answer  # web_answer imported lazily inside /ask
 from qdrant_rest import search
 
+# ---- Asana integration (optional) ----
+try:
+    from asana_integration import (
+        asana_available,
+        asana_answer,
+        refresh_asana_cache,
+        list_workspaces,
+        list_projects,
+    )
+    print("[boot] Asana integration loaded")
+except Exception as _e:
+    asana_available = lambda: False  # type: ignore
+    asana_answer = lambda q: "Asana integration not available."  # type: ignore
+    refresh_asana_cache = lambda force=True: []  # type: ignore
+    list_workspaces = lambda: []  # type: ignore
+    list_projects = lambda ws=None: []  # type: ignore
+    print("[boot] Asana integration NOT loaded:", _e)
+
 # ---------------------------
-# Local helpers / config
+# Config & helpers
 # ---------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
     v = (os.getenv(name) or "").strip().lower()
@@ -33,14 +50,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return False
     return default
 
-# Config
 PORT = int(os.getenv("PORT", "8000"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")]
 
 app = Flask(__name__)
 CORS(app, origins=CORS_ORIGINS)
 
-SHOW_SOURCES = False  # force disable sources
+SHOW_SOURCES = False
 TOP_K = int(os.getenv("TOP_K", "24"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "24000"))
 
@@ -53,7 +69,7 @@ GA_CSV = DATA_DIR / "ga_metrics.csv"
 # ---------------------------
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
-# add near your other routes
+
 @app.get("/")
 def home():
     return (
@@ -66,6 +82,9 @@ def home():
             <ul>
               <li><code>GET /status</code></li>
               <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
+              <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
+              <li><code>GET /asana/projects</code> — optional <code>?workspace=&lt;gid&gt;</code></li>
+              <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
             </ul>
           </body>
         </html>
@@ -74,29 +93,12 @@ def home():
         {"Content-Type": "text/html"},
     )
 
-
 def _sanitize_answer_format(text: str, max_bullets: int = 5):
-    """
-    Clean up model output into neat, spaced sections:
-    - Remove all URLs (inline, markdown, parenthetical domains)
-    - Convert ### headings to bold
-    - Normalize bullets to •
-    - Ensure blank lines between headings, paragraphs, and bullet blocks
-    - Limit bullets per section (default 5)
-    Returns (clean_text, []) since links/sources are stripped
-    """
     if not text:
         return "", []
-
-    # 1) Remove markdown links [title](url) → keep only title
     text = _MD_LINK_RE.sub(lambda m: m.group(1).strip(), text)
-
-    # 2) Remove raw URLs entirely
     text = _URL_RE.sub("", text)
-
-    # 3) Remove parenthetical domains like (apnews.com)
     text = re.sub(r"\([a-z0-9\.\-]+\.com\)", "", text, flags=re.IGNORECASE)
-
     lines = [ln.rstrip() for ln in text.splitlines()]
 
     out_lines = []
@@ -130,11 +132,8 @@ def _sanitize_answer_format(text: str, max_bullets: int = 5):
             out_lines.append(ln.strip())
 
     flush_bullets()
-
-    # Collapse excessive blank lines (max 2)
     clean_text = re.sub(r"\n{3,}", "\n\n", "\n".join(out_lines)).strip()
-
-    return clean_text, []  # always return empty sources
+    return clean_text, []
 
 # ---------------------------
 # Hashtag fallback (CSV)
@@ -270,33 +269,71 @@ def _maybe_answer_ga(q_lower: str) -> str | None:
     if "daily active users" in q_lower or "daily users" in q_lower: return _ga_daily_users(rows, days)
     return _ga_summary(rows, days)
 
+# ---------------------------
+# Routes
+# ---------------------------
 @app.get("/status")
 def status():
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "asana": bool(asana_available())})
+
+@app.get("/asana/workspaces")
+def asana_ws():
+    if not asana_available():
+        return jsonify({"error": "Asana not configured"}), 400
+    return jsonify({"workspaces": list_workspaces()})
+
+@app.get("/asana/projects")
+def asana_projects():
+    if not asana_available():
+        return jsonify({"error": "Asana not configured"}), 400
+    ws = request.args.get("workspace")
+    if ws:
+        return jsonify({"projects": list_projects(ws)})
+    return jsonify({"projects": list_projects(ws) if ws else list_all_projects()})  # type: ignore # list_all_projects from asana_integration
+
+@app.post("/asana/refresh")
+def asana_refresh():
+    if not asana_available():
+        return jsonify({"error": "Asana not configured"}), 400
+    projs = refresh_asana_cache(force=True)
+    return jsonify({"ok": True, "projects": projs})
 
 @app.post("/ask")
 def ask():
     try:
         data = request.get_json(force=True) or {}
         q = (data.get("question") or "").strip()
-        if not q: return jsonify({"error": "Missing question"}), 400
+        if not q:
+            return jsonify({"error": "Missing question"}), 400
 
         q_lower = q.lower()
         use_web = bool(data.get("web"))
         web_domains = data.get("web_domains") or []
 
-        ga_try = _maybe_answer_ga(q_lower)
-        if ga_try: return jsonify({"answer": ga_try, "sources": []})
+        # 1) Asana questions first (if PAT available)
+        if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project"]):
+            ans = asana_answer(q)
+            clean_text, _ = _sanitize_answer_format(ans)
+            return jsonify({"answer": clean_text, "sources": []})
 
+        # 2) GA CSV answers
+        ga_try = _maybe_answer_ga(q_lower)
+        if ga_try:
+            return jsonify({"answer": ga_try, "sources": []})
+
+        # 3) Hashtag CSV fallback
         if "hashtag" in q_lower or q_lower.startswith("#") or "hashtags" in q_lower:
             fallback = _hashtag_fallback()
-            if fallback: return jsonify({"answer": fallback, "sources": []})
+            if fallback:
+                return jsonify({"answer": fallback, "sources": []})
 
+        # 4) RAG search in Qdrant
         qvec = embed_text(q)
         hits = search(qvec, top_k=TOP_K)
         chunks = [h.get("payload", {}).get("text", "") for h in hits if h.get("payload")]
         context = "\n\n---\n\n".join([c for c in chunks if c])[:MAX_CONTEXT_CHARS]
 
+        # 5) Optional "web-style" formatting (no live web search here by default)
         wants_fresh = any(kw in q_lower for kw in ["today","latest","this week","breaking","current","news","2025"])
         if _env_bool("ENABLE_WEB_SEARCH", False) and (use_web or wants_fresh or not context.strip()):
             from openai_integration import web_answer_updated
@@ -305,11 +342,13 @@ def ask():
             if clean_text.strip():
                 return jsonify({"answer": clean_text, "sources": []})
 
+        # 6) Grounded answer using context
         if context.strip():
             raw_ans = (chat_answer(context, q, temperature=0.2) or "").strip()
             clean_text, _ = _sanitize_answer_format(raw_ans)
             return jsonify({"answer": clean_text, "sources": []})
 
+        # 7) Nothing found
         return jsonify({"answer": "I don’t know from the current dataset.", "sources": []})
     except Exception as e:
         return jsonify({"error": f"{type(e).__name__}: {e}", "answer": "", "sources": []}), 500
