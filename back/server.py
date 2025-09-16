@@ -20,14 +20,6 @@ print(f"[boot] QDRANT_API_KEY prefix={k[:8]} len={len(k)}")
 
 from openai_integration import embed_text, chat_answer  # web_answer imported lazily inside /ask
 from qdrant_rest import search
-from asana_integration import asana_available, asana_answer, refresh_asana_cache
-
-# inside /ask just after you parse question q:
-if asana_available():
-    aa = asana_answer(q)
-    if aa:
-        return jsonify({"answer": aa, "sources": []})
-
 
 # ---- Asana integration (optional) ----
 try:
@@ -37,14 +29,16 @@ try:
         refresh_asana_cache,
         list_workspaces,
         list_projects,
+        list_all_projects,
     )
     print("[boot] Asana integration loaded")
 except Exception as _e:
-    asana_available = lambda: False  # type: ignore
-    asana_answer = lambda q: "Asana integration not available."  # type: ignore
-    refresh_asana_cache = lambda force=True: []  # type: ignore
-    list_workspaces = lambda: []  # type: ignore
-    list_projects = lambda ws=None: []  # type: ignore
+    asana_available   = lambda: False                         # type: ignore
+    asana_answer      = lambda q: "Asana integration disabled" # type: ignore
+    refresh_asana_cache = lambda force=True: []               # type: ignore
+    list_workspaces   = lambda: []                            # type: ignore
+    list_projects     = lambda ws=None: []                    # type: ignore
+    list_all_projects = lambda: []                            # type: ignore
     print("[boot] Asana integration NOT loaded:", _e)
 
 # ---------------------------
@@ -61,27 +55,21 @@ def _env_bool(name: str, default: bool = False) -> bool:
 PORT = int(os.getenv("PORT", "8000"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")]
 
-# BEFORE:
-# CORS(app, origins=CORS_ORIGINS)
-
 app = Flask(__name__)
 
-# AFTER (drop this in the same place where app is created):
+# CORS – allow your Netlify site and localhost
 CORS(
     app,
     resources={
         r"/*": {
-            "origins": [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")],
+            "origins": CORS_ORIGINS,
             "methods": ["GET", "POST", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"],
-            "expose_headers": [],
             "supports_credentials": False,
             "max_age": 86400,  # cache preflight for a day
         }
     },
 )
-
-CORS(app, origins=CORS_ORIGINS)
 
 SHOW_SOURCES = False
 TOP_K = int(os.getenv("TOP_K", "24"))
@@ -123,11 +111,14 @@ def home():
 def _sanitize_answer_format(text: str, max_bullets: int = 5):
     if not text:
         return "", []
+    # remove [title](url) → keep title
     text = _MD_LINK_RE.sub(lambda m: m.group(1).strip(), text)
+    # remove raw URLs
     text = _URL_RE.sub("", text)
+    # remove parenthetical domains like (example.com)
     text = re.sub(r"\([a-z0-9\.\-]+\.com\)", "", text, flags=re.IGNORECASE)
-    lines = [ln.rstrip() for ln in text.splitlines()]
 
+    lines = [ln.rstrip() for ln in text.splitlines()]
     out_lines = []
     bullet_buffer = []
 
@@ -316,7 +307,7 @@ def asana_projects():
     ws = request.args.get("workspace")
     if ws:
         return jsonify({"projects": list_projects(ws)})
-    return jsonify({"projects": list_projects(ws) if ws else list_all_projects()})  # type: ignore # list_all_projects from asana_integration
+    return jsonify({"projects": list_all_projects()})
 
 @app.post("/asana/refresh")
 def asana_refresh():
