@@ -1,201 +1,206 @@
 # asana_integration.py
 import os
 import time
+import re
 from typing import Any, Dict, List, Optional
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
 
 ASANA_PAT = os.getenv("ASANA_PAT", "").strip()
 ASANA_BASE = "https://app.asana.com/api/1.0"
-
-# Optional config
-ASANA_PROJECT_IDS = [p.strip() for p in (os.getenv("ASANA_PROJECT_IDS") or "").split(",") if p.strip()]
 ASANA_CACHE_TTL = int(os.getenv("ASANA_CACHE_TTL", "300"))  # seconds
+ASANA_PROJECT_IDS_ENV = os.getenv("ASANA_PROJECT_IDS", "").strip()
 
-_session = requests.Session()
-_session.headers.update({"Authorization": f"Bearer {ASANA_PAT}"} if ASANA_PAT else {})
-
-# simple in-memory cache
+# simple in-memory cache: { "projects": {...}, "tasks:<project_gid>": {...} }
 _cache: Dict[str, Dict[str, Any]] = {}
-def _cache_get(key: str):
-    item = _cache.get(key)
-    if not item: return None
-    if time.time() - item["ts"] > ASANA_CACHE_TTL:
-        _cache.pop(key, None)
-        return None
-    return item["value"]
-
-def _cache_set(key: str, value: Any):
-    _cache[key] = {"ts": time.time(), "value": value}
 
 def asana_available() -> bool:
     return bool(ASANA_PAT)
 
-def _get(url: str, params: Optional[Dict[str, Any]] = None) -> Any:
-    r = _session.get(url, params=params, timeout=60)
+def _headers() -> Dict[str, str]:
+    if not asana_available():
+        raise RuntimeError("ASANA_PAT is not set")
+    return {"Authorization": f"Bearer {ASANA_PAT}"}
+
+def _get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = f"{ASANA_BASE}{path}"
+    r = requests.get(url, headers=_headers(), params=params, timeout=60)
+    # If you hit 402 here, it would mean a premium-only endpoint.
     r.raise_for_status()
     return r.json()
 
 def list_workspaces() -> List[Dict[str, Any]]:
-    key = "workspaces"
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
-    data = _get(f"{ASANA_BASE}/workspaces")
-    workspaces = data.get("data", [])
-    _cache_set(key, workspaces)
-    return workspaces
-
-def list_projects(workspace_gid: str) -> List[Dict[str, Any]]:
-    key = f"projects:{workspace_gid}"
-    cached = _cache_get(key)
-    if cached is not None:
-        return cached
-    # include team.name for clarity if available
-    data = _get(f"{ASANA_BASE}/projects", params={"workspace": workspace_gid, "archived": False})
-    projects = data.get("data", [])
-    _cache_set(key, projects)
-    return projects
-
-def list_project_tasks(project_gid: str, limit: int = 30) -> List[Dict[str, Any]]:
-    """
-    Uses the standard (free) endpoint to list tasks in a project.
-    We then fetch minimal fields for each task (name/notes/permalink_url).
-    """
-    tasks: List[Dict[str, Any]] = []
-
-    # 1) list task GIDs in the project
-    url = f"{ASANA_BASE}/projects/{project_gid}/tasks"
-    params = {"limit": min(limit, 50)}  # Asana paginates at 50 max
-    while True and len(tasks) < limit:
-        resp = _get(url, params=params)
-        data = resp.get("data", [])
-        for item in data:
-            tasks.append(item)
-            if len(tasks) >= limit:
-                break
-        # pagination
-        next_page = (resp.get("next_page") or {}).get("uri")
-        if not next_page or len(tasks) >= limit:
-            break
-        url = next_page
-        params = None  # next_page already has query
-
-    # 2) hydrate each task for details (free endpoint)
-    detailed: List[Dict[str, Any]] = []
-    for t in tasks:
-        gid = t.get("gid")
-        if not gid:
-            continue
-        detail = _get(f"{ASANA_BASE}/tasks/{gid}", params={
-            "opt_fields": "name,notes,permalink_url,projects.name,completed,due_on,assignee.name"
-        }).get("data", {})
-        detailed.append(detail)
-
-    return detailed
-
-def _keyword_match(task: Dict[str, Any], q: str) -> bool:
-    q = q.lower()
-    name = (task.get("name") or "").lower()
-    notes = (task.get("notes") or "").lower()
-    if q in name or q in notes:
-        return True
-    # also match project names
-    for p in (task.get("projects") or []):
-        if q in ((p.get("name") or "").lower()):
-            return True
-    return False
-
-def search_tasks_keyword(keyword: str, project_ids: Optional[List[str]] = None, per_project: int = 20, max_total: int = 40) -> List[Dict[str, Any]]:
-    """
-    Free-plan friendly search:
-      - list tasks per project
-      - client-side filter by keyword (name/notes/project)
-    """
-    projects = project_ids or ASANA_PROJECT_IDS
-    if not projects:
-        # Last resort: scan all projects in first workspace
-        wss = list_workspaces()
-        if not wss:
-            return []
-        projects_all = list_projects(wss[0]["gid"])
-        projects = [p["gid"] for p in projects_all]
-
-    out: List[Dict[str, Any]] = []
-    for pid in projects:
-        try:
-            tasks = list_project_tasks(pid, limit=per_project)
-            for t in tasks:
-                if _keyword_match(t, keyword):
-                    out.append(t)
-                    if len(out) >= max_total:
-                        return out
-        except requests.HTTPError:
-            # Skip projects we can't access
-            continue
+    data = _get("/workspaces")
+    out = []
+    for ws in data.get("data", []):
+        out.append({"gid": ws.get("gid"), "name": ws.get("name")})
     return out
 
-def projects_summary(project_ids: Optional[List[str]] = None) -> str:
-    pids = project_ids or ASANA_PROJECT_IDS
-    if not pids:
-        wss = list_workspaces()
-        if not wss:
-            return "I couldn’t find any Asana workspaces."
-        projects = list_projects(wss[0]["gid"])
-        if not projects:
-            return "I couldn’t find any Asana projects."
-        lines = ["**Asana projects (sample)**"]
-        for p in projects[:25]:
-            lines.append(f"• {p.get('name')} (gid: {p.get('gid')})")
-        return "\n".join(lines)
+def list_projects(workspace_gid: str) -> List[Dict[str, Any]]:
+    # projects in a workspace
+    params = {"workspace": workspace_gid}
+    data = _get("/projects", params=params)
+    out = []
+    # fetch team name if possible (optional; keep simple)
+    for p in data.get("data", []):
+        out.append({"gid": p.get("gid"), "name": p.get("name")})
+    return out
 
-    lines = ["**Configured Asana projects**"]
-    for gid in pids:
-        lines.append(f"• {gid}")
+def _list_projects_all_workspaces() -> List[Dict[str, Any]]:
+    out = []
+    for ws in list_workspaces():
+        out.extend(list_projects(ws["gid"]))
+    return out
+
+def list_all_projects() -> List[Dict[str, Any]]:
+    """
+    Returns projects constrained by ASANA_PROJECT_IDS if provided,
+    otherwise all projects from all accessible workspaces.
+    """
+    ids = [s.strip() for s in ASANA_PROJECT_IDS_ENV.split(",") if s.strip()]
+    if ids:
+        # resolve just those specific projects by gid
+        out = []
+        for gid in ids:
+            try:
+                data = _get(f"/projects/{gid}")
+                p = data.get("data", {})
+                out.append({"gid": p.get("gid"), "name": p.get("name")})
+            except Exception:
+                # ignore a bad/old gid
+                pass
+        return out
+    # else: list all
+    return _list_projects_all_workspaces()
+
+def _cache_get(key: str):
+    entry = _cache.get(key)
+    if not entry:
+        return None
+    if (time.time() - entry["ts"]) > entry["ttl"]:
+        return None
+    return entry["val"]
+
+def _cache_put(key: str, val, ttl: int):
+    _cache[key] = {"val": val, "ts": time.time(), "ttl": ttl}
+
+def _list_tasks_for_project(project_gid: str, limit: int = 200) -> List[Dict[str, Any]]:
+    """
+    Fetch tasks for a project (NOT using premium workspace search).
+    We request a reasonable limit (Asana default pagination is 50).
+    """
+    cache_key = f"tasks:{project_gid}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    # simple single-page fetch (increase if you need pagination)
+    params = {
+        "limit": min(limit, 200),
+        "opt_fields": "name,notes,permalink_url,completed,assignee.name,projects.name"
+    }
+    data = _get(f"/projects/{project_gid}/tasks", params=params)
+    tasks = data.get("data", [])
+    _cache_put(cache_key, tasks, ASANA_CACHE_TTL)
+    return tasks
+
+def refresh_asana_cache(force: bool = True) -> List[Dict[str, Any]]:
+    """
+    Preload tasks for configured projects (or all projects if none configured).
+    Returns the list of projects it touched.
+    """
+    projs = list_all_projects()
+    if not force:
+        return projs
+    for p in projs:
+        gid = p.get("gid")
+        if not gid:
+            continue
+        try:
+            _list_tasks_for_project(gid)
+        except Exception:
+            # don't fail the whole refresh on one bad project
+            pass
+    return projs
+
+# ---------------------------
+# Q&A helper
+# ---------------------------
+def _format_projects_bullets(projects: List[Dict[str, Any]]) -> str:
+    if not projects:
+        return "I couldn’t find any Asana projects."
+    lines = ["**Asana projects**", ""]
+    for p in projects[:30]:
+        lines.append(f"• {p.get('name')} — {p.get('gid')}")
+    if len(projects) > 30:
+        lines.append("• …")
     return "\n".join(lines)
 
-def format_tasks(tasks: List[Dict[str, Any]]) -> str:
+def _format_tasks_bullets(tasks: List[Dict[str, Any]], header: str = "Asana tasks") -> str:
     if not tasks:
-        return "No matching tasks found."
-    lines = ["**Asana tasks (matching)**"]
-    for t in tasks[:20]:
-        name = t.get("name") or "(no title)"
-        url = t.get("permalink_url") or ""
-        proj = ", ".join([p.get("name") for p in (t.get("projects") or []) if p.get("name")]) or "(no project)"
-        due = t.get("due_on") or ""
-        comp = "✅" if t.get("completed") else "⬜"
-        lines.append(f"• {comp} {name} — {proj}" + (f" — due {due}" if due else "") + (f"\n   {url}" if url else ""))
+        return "I couldn’t find matching Asana tasks."
+    lines = [f"**{header}**", ""]
+    for t in tasks[:10]:
+        name = (t.get("name") or "").strip()
+        url  = (t.get("permalink_url") or "").strip()
+        proj = ", ".join([pp.get("name") for pp in (t.get("projects") or []) if pp.get("name")])
+        snippet = (t.get("notes") or "").strip()
+        snippet = re.sub(r"\s+", " ", snippet)
+        if len(snippet) > 140:
+            snippet = snippet[:137] + "…"
+        line = f"• {name}"
+        if proj:
+            line += f" — [{proj}]"
+        # we don’t print raw URLs (your server will sanitize anyway), so omit url here.
+        if snippet:
+            line += f"\n  {snippet}"
+        lines.append(line)
+    if len(tasks) > 10:
+        lines.append("• …")
     return "\n".join(lines)
 
-def asana_answer(question: str) -> Optional[str]:
+def asana_answer(question: str) -> str:
     """
-    Very simple router: if the question mentions 'asana' or a configured project,
-    return projects list or keyword search results.
+    Lightweight intent:
+      - "list asana projects" / "asana projects": list projects
+      - else: keyword search across tasks in configured projects (or all)
     """
+    if not asana_available():
+        return "Asana is not configured."
+
     ql = (question or "").lower()
-    if "asana" not in ql:
-        # also trigger if any known project name keyword is in the query
-        pass
 
-    # common intents
-    if "list projects" in ql or "projects list" in ql:
-        return projects_summary()
+    # list projects intent
+    if ("asana" in ql and "project" in ql) or ("list projects" in ql):
+        projs = list_all_projects()
+        return _format_projects_bullets(projs)
 
-    # keyword-style: "asana tasks about X", "tasks about XO Curls", etc.
-    for hint in ["tasks about", "tasks on", "tasks for", "search tasks", "find tasks"]:
-        if hint in ql:
-            kw = question.lower().split(hint, 1)[1].strip(" :\"'").strip()
-            if kw:
-                tasks = search_tasks_keyword(kw)
-                return format_tasks(tasks)
+    # keyword task search (non-premium friendly)
+    # Extract a simple keyword phrase
+    m = re.search(r"(tasks?\s+(about|for|with)\s+)(.+)", ql)
+    keyword = (m.group(3).strip() if m else "").strip("'\" ")
+    if not keyword:
+        # fallback: use whole query as keyword after removing the word 'asana'
+        keyword = ql.replace("asana", "").strip()
 
-    # fallback: if user says "asana" but no hint, show projects
-    if "asana" in ql:
-        return projects_summary()
+    # collect tasks from projects, filter locally
+    projs = list_all_projects()
+    matched: List[Dict[str, Any]] = []
+    for p in projs:
+        gid = p.get("gid")
+        if not gid:
+            continue
+        try:
+            tasks = _list_tasks_for_project(gid)
+        except Exception:
+            continue
+        for t in tasks:
+            name = (t.get("name") or "").lower()
+            notes = (t.get("notes") or "").lower()
+            if keyword and (keyword in name or keyword in notes):
+                matched.append(t)
 
-    return None
+    if not matched:
+        # No matches; offer the list of projects as a hint.
+        return "I couldn’t find matching Asana tasks.\n\n" + _format_projects_bullets(projs)
 
-def refresh_asana_cache():
-    _cache.clear()
+    return _format_tasks_bullets(matched, header=f"Asana tasks matching “{keyword}”")
