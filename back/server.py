@@ -29,16 +29,14 @@ try:
         refresh_asana_cache,
         list_workspaces,
         list_projects,
-        list_all_projects,
     )
     print("[boot] Asana integration loaded")
 except Exception as _e:
-    asana_available   = lambda: False                         # type: ignore
-    asana_answer      = lambda q: "Asana integration disabled" # type: ignore
-    refresh_asana_cache = lambda force=True: []               # type: ignore
-    list_workspaces   = lambda: []                            # type: ignore
-    list_projects     = lambda ws=None: []                    # type: ignore
-    list_all_projects = lambda: []                            # type: ignore
+    asana_available = lambda: False                          # type: ignore
+    asana_answer = lambda q: "Asana integration disabled"    # type: ignore
+    refresh_asana_cache = lambda force=True: []              # type: ignore
+    list_workspaces = lambda: []                             # type: ignore
+    list_projects = lambda ws=None: []                       # type: ignore
     print("[boot] Asana integration NOT loaded:", _e)
 
 # ---------------------------
@@ -54,6 +52,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 PORT = int(os.getenv("PORT", "8000"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")]
+ASANA_WORKSPACE_ID = (os.getenv("ASANA_WORKSPACE_ID") or "").strip()
 
 app = Flask(__name__)
 
@@ -98,7 +97,7 @@ def home():
               <li><code>GET /status</code></li>
               <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
               <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
-              <li><code>GET /asana/projects</code> — optional <code>?workspace=&lt;gid&gt;</code></li>
+              <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or omit to use ASANA_WORKSPACE_ID</li>
               <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
             </ul>
           </body>
@@ -304,10 +303,10 @@ def asana_ws():
 def asana_projects():
     if not asana_available():
         return jsonify({"error": "Asana not configured"}), 400
-    ws = request.args.get("workspace")
-    if ws:
-        return jsonify({"projects": list_projects(ws)})
-    return jsonify({"projects": list_all_projects()})
+    ws = request.args.get("workspace") or ASANA_WORKSPACE_ID
+    if not ws:
+        return jsonify({"error": "Missing ?workspace=<gid> and ASANA_WORKSPACE_ID not set"}), 400
+    return jsonify({"projects": list_projects(ws)})
 
 @app.post("/asana/refresh")
 def asana_refresh():
@@ -329,7 +328,7 @@ def ask():
         web_domains = data.get("web_domains") or []
 
         # 1) Asana questions first (if PAT available)
-        if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project"]):
+        if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project", "tasks"]):
             ans = asana_answer(q)
             clean_text, _ = _sanitize_answer_format(ans)
             return jsonify({"answer": clean_text, "sources": []})
