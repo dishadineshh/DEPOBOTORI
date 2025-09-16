@@ -53,6 +53,24 @@ def _env_bool(name: str, default: bool = False) -> bool:
 PORT = int(os.getenv("PORT", "8000"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")]
 
+# BEFORE:
+# CORS(app, origins=CORS_ORIGINS)
+
+# AFTER (drop this in the same place where app is created):
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")],
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "expose_headers": [],
+            "supports_credentials": False,
+            "max_age": 86400,  # cache preflight for a day
+        }
+    },
+)
+
 app = Flask(__name__)
 CORS(app, origins=CORS_ORIGINS)
 
