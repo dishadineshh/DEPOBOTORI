@@ -20,6 +20,14 @@ print(f"[boot] QDRANT_API_KEY prefix={k[:8]} len={len(k)}")
 
 from openai_integration import embed_text, chat_answer  # web_answer imported lazily inside /ask
 from qdrant_rest import search
+from asana_integration import asana_available, asana_answer, refresh_asana_cache
+
+# inside /ask just after you parse question q:
+if asana_available():
+    aa = asana_answer(q)
+    if aa:
+        return jsonify({"answer": aa, "sources": []})
+
 
 # ---- Asana integration (optional) ----
 try:
@@ -56,6 +64,8 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3
 # BEFORE:
 # CORS(app, origins=CORS_ORIGINS)
 
+app = Flask(__name__)
+
 # AFTER (drop this in the same place where app is created):
 CORS(
     app,
@@ -71,7 +81,6 @@ CORS(
     },
 )
 
-app = Flask(__name__)
 CORS(app, origins=CORS_ORIGINS)
 
 SHOW_SOURCES = False
