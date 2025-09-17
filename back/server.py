@@ -3,6 +3,7 @@ import re
 import csv
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional, List  # Python 3.9+ compatible type hints
 
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
@@ -27,7 +28,7 @@ if qdrant_key:
     print(f"[boot] QDRANT_API_KEY loaded (length {len(qdrant_key)})")
 
 # Imports that use env
-from openai_integration import embed_text, chat_answer  # no secret logging inside
+from openai_integration import embed_text, chat_answer, web_answer_updated  # no secret logging inside
 from qdrant_rest import search
 
 # ---- Asana integration (optional) ----
@@ -92,9 +93,9 @@ GA_CSV = DATA_DIR / "ga_metrics.csv"
 # Secret redaction in error messages
 # ---------------------------
 _SECRET_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),              # OpenAI keys
-    re.compile(r"Bearer\s+[A-Za-z0-9\-_\.]{20,}"),      # Bearer tokens
-    re.compile(r"[A-Za-z0-9]{32,}"),                    # long random tokens
+    re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),          # OpenAI-like keys
+    re.compile(r"Bearer\s+[A-Za-z0-9\-_\.]{20,}"),  # Bearer tokens
+    re.compile(r"[A-Za-z0-9]{32,}"),                # long random tokens
 ]
 
 def _sanitize_error_message(msg: str) -> str:
@@ -187,7 +188,7 @@ def _parse_int(val, default=0):
     except Exception:
         return default
 
-def _find_col(row: dict, names: list[str]) -> str:
+def _find_col(row: dict, names: List[str]) -> str:
     lower_map = {k.lower(): k for k in row.keys()}
     for n in names:
         key = lower_map.get(n.lower())
@@ -212,26 +213,26 @@ def _load_ga_rows():
             users_col   = _find_col(raw, ["activeUsers", "users", "Users"])
             events_col  = _find_col(raw, ["eventCount", "Events"])
 
-            dt = None
+            dt_val = None
             if date_col:
                 ds = (raw.get(date_col) or "").strip()
                 if len(ds) == 8 and ds.isdigit():
                     try:
-                        dt = datetime.strptime(ds, "%Y%m%d").date()
+                        dt_val = datetime.strptime(ds, "%Y%m%d").date()
                     except Exception:
-                        dt = None
+                        dt_val = None
                 else:
                     try:
-                        dt = datetime.fromisoformat(ds).date()
+                        dt_val = datetime.fromisoformat(ds).date()
                     except Exception:
-                        dt = None
+                        dt_val = None
 
             country = (raw.get(country_col) or "").strip() if country_col else None
             page    = (raw.get(page_col) or "").strip() if page_col else None
             users   = _parse_int(raw.get(users_col), 0) if users_col else 0
             events  = _parse_int(raw.get(events_col), 0) if events_col else 0
 
-            out.append({"date": dt, "country": country or None, "page": page or None, "users": users, "events": events})
+            out.append({"date": dt_val, "country": country or None, "page": page or None, "users": users, "events": events})
     return out
 
 def _ga_in_window(rows, days: int):
@@ -295,9 +296,9 @@ def _ga_daily_users(rows, days: int):
         return "I don’t have GA daily user data."
     return "\n".join(lines)
 
-def _maybe_answer_ga(q_lower: str) -> str | None:
+def _maybe_answer_ga(q_lower: str) -> Optional[str]:
     if not GA_CSV.exists():
-        return None
+        return "I don’t have GA CSV data on this server yet."
     ga_mention = ("ga" in q_lower) or ("google analytics" in q_lower) or ("analytics" in q_lower)
     if not ga_mention and not any(kw in q_lower for kw in [
         "top countries", "top pages", "busiest", "total active users", "daily active users", "daily users"
@@ -306,7 +307,7 @@ def _maybe_answer_ga(q_lower: str) -> str | None:
     days = 30 if "30" in q_lower or "last month" in q_lower else 7
     rows = _load_ga_rows()
     if not rows:
-        return None
+        return "I don’t have GA CSV data on this server yet."
     if "top countries" in q_lower:
         return _ga_top_countries(rows, days)
     if "top pages" in q_lower:
@@ -337,6 +338,9 @@ def home():
               <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
               <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or set <code>ASANA_WORKSPACE_ID</code></li>
               <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
+              <li><code>GET /diag/openai</code> — ping OpenAI path</li>
+              <li><code>GET /diag/web</code> — quick web formatter ping</li>
+              <li><code>GET /integrations/status</code> — check flags/files</li>
             </ul>
           </body>
         </html>
@@ -345,6 +349,48 @@ def home():
         {"Content-Type": "text/html"},
     )
 
+# ---- Diagnostics & health ----
+@app.get("/diag/openai")
+def diag_openai():
+    from openai_integration import _chat_complete  # local import to avoid circulars
+    try:
+        txt = _chat_complete(
+            messages=[{"role": "system", "content": "You are a ping."},
+                      {"role": "user", "content": "reply with PONG only"}],
+            model=os.getenv("WEB_MODEL", "gpt-4o-mini"),
+            temperature=0.0,
+            timeout=30,
+        )
+        return jsonify({"ok": True, "reply": txt})
+    except Exception as e:
+        return jsonify({"ok": False, "error": _sanitize_error_message(str(e))}), 500
+
+@app.get("/diag/web")
+def diag_web():
+    try:
+        allowed = None
+        wad = os.getenv("WEB_ALLOWED_DOMAINS")
+        if wad:
+            allowed = [d.strip() for d in wad.split(",") if d.strip()]
+        res = web_answer_updated("Give me the top 3 headlines (format only).", allowed_domains=allowed)
+        return jsonify({"ok": True, "snippet": (res.get("text","") or "")[:240]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": _sanitize_error_message(str(e))}), 500
+
+@app.get("/integrations/status")
+def integrations_status():
+    return jsonify({
+        "ok": True,
+        "asana_loaded": bool(asana_available()),
+        "ga_csv_present": GA_CSV.exists(),
+        "hashtags_csv_present": HASHTAGS_CSV.exists(),
+        "qdrant_url": bool(os.getenv("QDRANT_URL")),
+        "web_model": os.getenv("WEB_MODEL"),
+        "enable_web_search": _env_bool("ENABLE_WEB_SEARCH", True),
+        "cors_origins": CORS_ORIGINS,
+    })
+
+# ---- Asana routes ----
 @app.get("/asana/workspaces")
 def asana_ws():
     if not asana_available():
@@ -367,6 +413,7 @@ def asana_refresh():
     projs = refresh_asana_cache(force=True)
     return jsonify({"ok": True, "projects": projs})
 
+# ---- Main /ask ----
 @app.post("/ask")
 def ask():
     try:
@@ -376,8 +423,6 @@ def ask():
             return jsonify({"error": "Missing question"}), 400
 
         q_lower = q.lower()
-        use_web = bool(data.get("web"))  # reserved flag; web tool disabled by default
-        web_domains = data.get("web_domains") or []
 
         # 1) Asana questions first (if PAT available)
         if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project", "tasks"]):
@@ -396,9 +441,25 @@ def ask():
             if fallback:
                 return jsonify({"answer": fallback, "sources": []})
 
-        # 4) RAG search in Qdrant
+        # 3.5) Web-style answers (no live browsing; LLM-formatted news/analysis)
+        web_mode = str(data.get("mode") or "").lower() == "web"
+        newsy = any(k in q_lower for k in ["news", "breaking", "today", "latest", "headline", "update"])
+        if _env_bool("ENABLE_WEB_SEARCH", True) and (web_mode or newsy):
+            allowed = None
+            wad_env = os.getenv("WEB_ALLOWED_DOMAINS")
+            if wad_env:
+                allowed = [d.strip() for d in wad_env.split(",") if d.strip()]
+            wa = web_answer_updated(question=q, allowed_domains=allowed)  # {"text": "...", "sources": []}
+            clean_text, _ = _sanitize_answer_format(wa.get("text", ""))
+            if clean_text:
+                return jsonify({"answer": clean_text, "sources": wa.get("sources", [])})
+
+        # 4) RAG search in Qdrant (guarded)
         qvec = embed_text(q)
-        hits = search(qvec, top_k=TOP_K)
+        try:
+            hits = search(qvec, top_k=TOP_K)
+        except Exception as _e:
+            hits = []
         chunks = [h.get("payload", {}).get("text", "") for h in hits if h.get("payload")]
         context = "\n\n---\n\n".join([c for c in chunks if c])[:MAX_CONTEXT_CHARS]
 
@@ -412,6 +473,7 @@ def ask():
         return jsonify({"answer": "I don’t know from the current dataset.", "sources": []})
     except Exception as e:
         safe_msg = _sanitize_error_message(str(e))
+        # Return a generic, sanitized error to the client
         return jsonify({"error": f"{type(e).__name__}: {safe_msg}", "answer": "", "sources": []}), 500
 
 if __name__ == "__main__":
