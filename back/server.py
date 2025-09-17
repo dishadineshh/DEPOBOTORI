@@ -1,4 +1,3 @@
-# server.py
 import os
 import re
 import csv
@@ -13,12 +12,22 @@ from flask_cors import CORS
 ENV_PATH = Path(__file__).with_name(".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
-print(f"[boot] WEB_MODEL={os.getenv('WEB_MODEL')}, WEB_ALLOWED_DOMAINS={os.getenv('WEB_ALLOWED_DOMAINS')}")
-k = (os.getenv("QDRANT_API_KEY") or "").strip()
-print(f"[boot] QDRANT_URL={os.getenv('QDRANT_URL')}")
-print(f"[boot] QDRANT_API_KEY prefix={k[:8]} len={len(k)}")
+# --- Safe startup logs (never print secrets) ---
+wm = os.getenv("WEB_MODEL")
+wad = os.getenv("WEB_ALLOWED_DOMAINS")
+qdrant_url = os.getenv("QDRANT_URL")
+qdrant_key = (os.getenv("QDRANT_API_KEY") or "").strip()
 
-from openai_integration import embed_text, chat_answer  # web_answer imported lazily inside /ask
+print(f"[boot] WEB_MODEL set to {wm if wm else '(default)'}")
+if wad:
+    print("[boot] WEB_ALLOWED_DOMAINS configured")
+if qdrant_url:
+    print("[boot] QDRANT_URL configured")
+if qdrant_key:
+    print(f"[boot] QDRANT_API_KEY loaded (length {len(qdrant_key)})")
+
+# Imports that use env
+from openai_integration import embed_text, chat_answer  # no secret logging inside
 from qdrant_rest import search
 
 # ---- Asana integration (optional) ----
@@ -32,12 +41,13 @@ try:
     )
     print("[boot] Asana integration loaded")
 except Exception as _e:
+    # Safe fallbacks if the module isn't present/valid
     asana_available = lambda: False                          # type: ignore
     asana_answer = lambda q: "Asana integration disabled"    # type: ignore
     refresh_asana_cache = lambda force=True: []              # type: ignore
     list_workspaces = lambda: []                             # type: ignore
     list_projects = lambda ws=None: []                       # type: ignore
-    print("[boot] Asana integration NOT loaded:", _e)
+    print(f"[boot] Asana integration NOT loaded ({type(_e).__name__})")
 
 # ---------------------------
 # Config & helpers
@@ -79,33 +89,27 @@ HASHTAGS_CSV = DATA_DIR / "instagram_hashtags.csv"
 GA_CSV = DATA_DIR / "ga_metrics.csv"
 
 # ---------------------------
-# Output sanitizer
+# Secret redaction in error messages
+# ---------------------------
+_SECRET_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),              # OpenAI keys
+    re.compile(r"Bearer\s+[A-Za-z0-9\-_\.]{20,}"),      # Bearer tokens
+    re.compile(r"[A-Za-z0-9]{32,}"),                    # long random tokens
+]
+
+def _sanitize_error_message(msg: str) -> str:
+    if not msg:
+        return msg
+    safe = msg
+    for pat in _SECRET_PATTERNS:
+        safe = pat.sub("[REDACTED]", safe)
+    return safe
+
+# ---------------------------
+# Output sanitizer (formatting)
 # ---------------------------
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
-
-@app.get("/")
-def home():
-    return (
-        """
-        <html>
-          <head><title>DataDepot API</title></head>
-          <body style="font-family: system-ui; max-width: 700px; margin: 40px auto; line-height:1.5">
-            <h1>DataDepot API is live ✅</h1>
-            <p>Try these endpoints:</p>
-            <ul>
-              <li><code>GET /status</code></li>
-              <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
-              <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
-              <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or omit to use ASANA_WORKSPACE_ID</li>
-              <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
-            </ul>
-          </body>
-        </html>
-        """,
-        200,
-        {"Content-Type": "text/html"},
-    )
 
 def _sanitize_answer_format(text: str, max_bullets: int = 5):
     if not text:
@@ -207,25 +211,33 @@ def _load_ga_rows():
             page_col    = _find_col(raw, ["pagePath", "page", "page_title", "Page path and screen class", "pagePathPlusQuery"])
             users_col   = _find_col(raw, ["activeUsers", "users", "Users"])
             events_col  = _find_col(raw, ["eventCount", "Events"])
+
             dt = None
             if date_col:
                 ds = (raw.get(date_col) or "").strip()
                 if len(ds) == 8 and ds.isdigit():
-                    try: dt = datetime.strptime(ds, "%Y%m%d").date()
-                    except Exception: dt = None
+                    try:
+                        dt = datetime.strptime(ds, "%Y%m%d").date()
+                    except Exception:
+                        dt = None
                 else:
-                    try: dt = datetime.fromisoformat(ds).date()
-                    except Exception: dt = None
+                    try:
+                        dt = datetime.fromisoformat(ds).date()
+                    except Exception:
+                        dt = None
+
             country = (raw.get(country_col) or "").strip() if country_col else None
             page    = (raw.get(page_col) or "").strip() if page_col else None
             users   = _parse_int(raw.get(users_col), 0) if users_col else 0
             events  = _parse_int(raw.get(events_col), 0) if events_col else 0
+
             out.append({"date": dt, "country": country or None, "page": page or None, "users": users, "events": events})
     return out
 
 def _ga_in_window(rows, days: int):
     valid = [r for r in rows if r["date"] is not None]
-    if not valid: return []
+    if not valid:
+        return []
     latest = max(r["date"] for r in valid)
     start = latest - timedelta(days=days - 1)
     return [r for r in valid if start <= r["date"] <= latest]
@@ -235,7 +247,8 @@ def _ga_summary(rows, days: int):
     total_users = sum(r["users"] for r in w)
     total_events = sum(r["events"] for r in w)
     by_day = {}
-    for r in w: by_day[r["date"]] = by_day.get(r["date"], 0) + r["users"]
+    for r in w:
+        by_day[r["date"]] = by_day.get(r["date"], 0) + r["users"]
     day_lines = [f"• {d.isoformat()}: {by_day[d]} users" for d in sorted(by_day.keys())]
     return (
         f"**Google Analytics — last {days} days**\n\n"
@@ -247,43 +260,59 @@ def _ga_summary(rows, days: int):
 def _ga_top_countries(rows, days: int, limit: int = 5):
     w = _ga_in_window(rows, days)
     agg = {}
-    for r in w: agg[r["country"] or "(unknown)"] = agg.get(r["country"] or "(unknown)", 0) + r["users"]
+    for r in w:
+        agg[r["country"] or "(unknown)"] = agg.get(r["country"] or "(unknown)", 0) + r["users"]
     top = sorted(agg.items(), key=lambda x: x[1], reverse=True)[:limit]
-    if not top: return "I don’t have GA country data in the dataset."
+    if not top:
+        return "I don’t have GA country data in the dataset."
     lines = ["**Top countries by users**"]
-    for c, n in top: lines.append(f"• {c}: {n}")
+    for c, n in top:
+        lines.append(f"• {c}: {n}")
     return "\n".join(lines)
 
 def _ga_top_pages(rows, days: int, limit: int = 5):
     w = _ga_in_window(rows, days)
     agg = {}
-    for r in w: agg[r["page"] or "(unknown)"] = agg.get(r["page"] or "(unknown)", 0) + r["users"]
+    for r in w:
+        agg[r["page"] or "(unknown)"] = agg.get(r["page"] or "(unknown)", 0) + r["users"]
     top = sorted(agg.items(), key=lambda x: x[1], reverse=True)[:limit]
-    if not top: return "I don’t have GA page data in the dataset."
+    if not top:
+        return "I don’t have GA page data in the dataset."
     lines = ["**Top pages by users**"]
-    for p, n in top: lines.append(f"• {p}: {n}")
+    for p, n in top:
+        lines.append(f"• {p}: {n}")
     return "\n".join(lines)
 
 def _ga_daily_users(rows, days: int):
     w = _ga_in_window(rows, days)
     by_day = {}
-    for r in w: by_day[r["date"]] = by_day.get(r["date"], 0) + r["users"]
+    for r in w:
+        by_day[r["date"]] = by_day.get(r["date"], 0) + r["users"]
     lines = ["**Daily active users**"]
-    for d in sorted(by_day.keys()): lines.append(f"• {d.isoformat()}: {by_day[d]}")
-    if len(lines) == 1: return "I don’t have GA daily user data."
+    for d in sorted(by_day.keys()):
+        lines.append(f"• {d.isoformat()}: {by_day[d]}")
+    if len(lines) == 1:
+        return "I don’t have GA daily user data."
     return "\n".join(lines)
 
 def _maybe_answer_ga(q_lower: str) -> str | None:
-    if not GA_CSV.exists(): return None
+    if not GA_CSV.exists():
+        return None
     ga_mention = ("ga" in q_lower) or ("google analytics" in q_lower) or ("analytics" in q_lower)
-    if not ga_mention and not any(kw in q_lower for kw in ["top countries","top pages","busiest","total active users","daily active users","daily users"]):
+    if not ga_mention and not any(kw in q_lower for kw in [
+        "top countries", "top pages", "busiest", "total active users", "daily active users", "daily users"
+    ]):
         return None
     days = 30 if "30" in q_lower or "last month" in q_lower else 7
     rows = _load_ga_rows()
-    if not rows: return None
-    if "top countries" in q_lower: return _ga_top_countries(rows, days)
-    if "top pages" in q_lower: return _ga_top_pages(rows, days)
-    if "daily active users" in q_lower or "daily users" in q_lower: return _ga_daily_users(rows, days)
+    if not rows:
+        return None
+    if "top countries" in q_lower:
+        return _ga_top_countries(rows, days)
+    if "top pages" in q_lower:
+        return _ga_top_pages(rows, days)
+    if "daily active users" in q_lower or "daily users" in q_lower:
+        return _ga_daily_users(rows, days)
     return _ga_summary(rows, days)
 
 # ---------------------------
@@ -292,6 +321,29 @@ def _maybe_answer_ga(q_lower: str) -> str | None:
 @app.get("/status")
 def status():
     return jsonify({"ok": True, "asana": bool(asana_available())})
+
+@app.get("/")
+def home():
+    return (
+        """
+        <html>
+          <head><title>DataDepot API</title></head>
+          <body style="font-family: system-ui; max-width: 700px; margin: 40px auto; line-height:1.5">
+            <h1>DataDepot API is live ✅</h1>
+            <p>Try these endpoints:</p>
+            <ul>
+              <li><code>GET /status</code></li>
+              <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
+              <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
+              <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or set <code>ASANA_WORKSPACE_ID</code></li>
+              <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
+            </ul>
+          </body>
+        </html>
+        """,
+        200,
+        {"Content-Type": "text/html"},
+    )
 
 @app.get("/asana/workspaces")
 def asana_ws():
@@ -324,7 +376,7 @@ def ask():
             return jsonify({"error": "Missing question"}), 400
 
         q_lower = q.lower()
-        use_web = bool(data.get("web"))
+        use_web = bool(data.get("web"))  # reserved flag; web tool disabled by default
         web_domains = data.get("web_domains") or []
 
         # 1) Asana questions first (if PAT available)
@@ -350,25 +402,17 @@ def ask():
         chunks = [h.get("payload", {}).get("text", "") for h in hits if h.get("payload")]
         context = "\n\n---\n\n".join([c for c in chunks if c])[:MAX_CONTEXT_CHARS]
 
-        # 5) Optional "web-style" formatting (no live web search here by default)
-        wants_fresh = any(kw in q_lower for kw in ["today","latest","this week","breaking","current","news","2025"])
-        if _env_bool("ENABLE_WEB_SEARCH", False) and (use_web or wants_fresh or not context.strip()):
-            from openai_integration import web_answer_updated
-            wa = web_answer_updated(question=q, allowed_domains=web_domains if web_domains else None)
-            clean_text, _ = _sanitize_answer_format(wa.get("text") or "")
-            if clean_text.strip():
-                return jsonify({"answer": clean_text, "sources": []})
-
-        # 6) Grounded answer using context
+        # 5) Grounded answer using context
         if context.strip():
             raw_ans = (chat_answer(context, q, temperature=0.2) or "").strip()
             clean_text, _ = _sanitize_answer_format(raw_ans)
             return jsonify({"answer": clean_text, "sources": []})
 
-        # 7) Nothing found
+        # 6) Nothing found
         return jsonify({"answer": "I don’t know from the current dataset.", "sources": []})
     except Exception as e:
-        return jsonify({"error": f"{type(e).__name__}: {e}", "answer": "", "sources": []}), 500
+        safe_msg = _sanitize_error_message(str(e))
+        return jsonify({"error": f"{type(e).__name__}: {safe_msg}", "answer": "", "sources": []}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=True)

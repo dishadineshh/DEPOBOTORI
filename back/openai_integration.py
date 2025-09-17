@@ -1,4 +1,3 @@
-# openai_integration.py
 import os
 import time
 import random
@@ -7,14 +6,17 @@ from typing import Any, Dict, List, Optional
 import requests
 from dotenv import load_dotenv
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Env & constants
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set. Put it in back/.env")
+
+print("[boot] OpenAI API key loaded")
+
 
 # Use ONLY the REST endpoints to avoid SDK .responses attribute issues
 BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -28,9 +30,9 @@ _DEFAULT_HEADERS = {
     "Content-Type": "application/json",
 }
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Helpers
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 def _env_bool(name: str, default: bool = False) -> bool:
     v = (os.getenv(name) or "").strip().lower()
     if v in ("1", "true", "yes", "on"):
@@ -61,9 +63,9 @@ def _post_with_retry(url: str, json_payload: dict, timeout: int = 120, max_retri
         last.raise_for_status()
     raise RuntimeError("Request failed after retries")
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Embeddings (REST)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 def embed_text(text: str):
     """Get a vector embedding for the given text (text-embedding-3-small, 1536 dims)."""
     url = f"{BASE_URL}/embeddings"
@@ -71,9 +73,9 @@ def embed_text(text: str):
     r = _post_with_retry(url, payload, timeout=60)
     return r.json()["data"][0]["embedding"]
 
-# -----------------------------------------------------------------------------
-# Chat core (REST) — reused by chat_answer + Asana/web formatters
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Chat core (REST)
+# ---------------------------------------------------------------------
 def _chat_complete(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
@@ -90,9 +92,9 @@ def _chat_complete(
     data = r.json()
     return (data["choices"][0]["message"]["content"] or "").strip()
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Grounded chat (uses only provided context)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
 _CLOSERS = [
     "Would you like a quick example from the dataset?",
     "Want me to expand on one point?",
@@ -130,13 +132,12 @@ def chat_answer(context: str, question: str, temperature: float = 0.2) -> str:
         msg = (msg + "\n\n" + c).strip()
     return msg
 
-# -----------------------------------------------------------------------------
-# "Web answer" style (no live web search; just clean, link-free formatting)
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Web-style formatting (no live web search)
+# ---------------------------------------------------------------------
 def _web_style_prompt(question: str, allowed_domains: Optional[List[str]]) -> str:
     domain_hint = ""
     if allowed_domains:
-        # non-enforced hint for the model; server still sanitizes
         domain_clause = " OR ".join([f"site:{d}" for d in allowed_domains])
         domain_hint = f"\n\n(When relevant, consider sources like: {domain_clause})"
 
@@ -152,16 +153,13 @@ def _web_style_prompt(question: str, allowed_domains: Optional[List[str]]) -> st
         "- 2–4 bullets on risks, next data releases, or policy decisions (only if useful)\n\n"
         "Important rules:\n"
         "- Do NOT include any URLs, raw links, or bracketed citations in the body.\n"
-        "- Keep numbers/dates specific (e.g., 'August 2025', '0.1% m/m').\n"
+        "- Keep numbers/dates specific.\n"
         "- Neutral, non-sensational tone.\n"
     )
     return f"{formatting_rules}\nUser question:\n{question}{domain_hint}"
 
 def web_answer_updated(question: str, allowed_domains: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Formerly used Responses + web_search. We now produce a clean, link-free
-    analysis via Chat Completions (no web tool), and return empty sources.
-    """
+    """Clean, link-free answer via Chat Completions."""
     system = "You are a crisp news/analysis formatter. Return ONLY the formatted answer. No links."
     prompt = _web_style_prompt(question, allowed_domains)
     text = _chat_complete(
@@ -174,14 +172,11 @@ def web_answer_updated(question: str, allowed_domains: Optional[List[str]] = Non
 def web_answer(
     question: str,
     allowed_domains: Optional[List[str]] = None,
-    context_size: Optional[str] = None,  # kept for signature compatibility
-    location: Optional[Dict[str, str]] = None,  # kept for signature compatibility
+    context_size: Optional[str] = None,
+    location: Optional[Dict[str, str]] = None,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Legacy helper (kept for compatibility). Returns:
-      { "text": <answer string>, "sources": [] }
-    """
+    """Legacy helper (kept for compatibility)."""
     if not _env_bool("ENABLE_WEB_SEARCH", True):
         return {"text": "Web search is disabled.", "sources": []}
 
