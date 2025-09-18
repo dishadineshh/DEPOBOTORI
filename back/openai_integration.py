@@ -11,14 +11,10 @@ from dotenv import load_dotenv
 # ---------------------------------------------------------------------
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set. Put it in back/.env")
 
-print("[boot] OpenAI API key loaded")
-
-
-# Use ONLY the REST endpoints to avoid SDK .responses attribute issues
 BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 WEB_MODEL = os.getenv("WEB_MODEL", "gpt-4o-mini")  # chat completions
@@ -41,13 +37,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
         return False
     return default
 
-def _parse_domains(s: str) -> List[str]:
-    return [d.strip() for d in (s or "").split(",") if d.strip()]
-
 def _headers():
     return _DEFAULT_HEADERS
 
-def _post_with_retry(url: str, json_payload: dict, timeout: int = 120, max_retries: int = 3):
+# ✅ tighter retries & timeouts to avoid gunicorn 502s
+def _post_with_retry(url: str, json_payload: dict, timeout: int = 25, max_retries: int = 2):
     backoff = 1.5
     last = None
     for i in range(max_retries):
@@ -70,7 +64,7 @@ def embed_text(text: str):
     """Get a vector embedding for the given text (text-embedding-3-small, 1536 dims)."""
     url = f"{BASE_URL}/embeddings"
     payload = {"model": EMBED_MODEL, "input": text}
-    r = _post_with_retry(url, payload, timeout=60)
+    r = _post_with_retry(url, payload, timeout=20)
     return r.json()["data"][0]["embedding"]
 
 # ---------------------------------------------------------------------
@@ -80,7 +74,7 @@ def _chat_complete(
     messages: List[Dict[str, str]],
     model: Optional[str] = None,
     temperature: float = 0.2,
-    timeout: int = 120,
+    timeout: int = 25,  # tight to keep requests snappy
 ) -> str:
     url = f"{BASE_URL}/chat/completions"
     payload = {
@@ -159,32 +153,13 @@ def _web_style_prompt(question: str, allowed_domains: Optional[List[str]]) -> st
     return f"{formatting_rules}\nUser question:\n{question}{domain_hint}"
 
 def web_answer_updated(question: str, allowed_domains: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Clean, link-free answer via Chat Completions."""
+    """Clean, link-free answer via Chat Completions (formatter only)."""
     system = "You are a crisp news/analysis formatter. Return ONLY the formatted answer. No links."
     prompt = _web_style_prompt(question, allowed_domains)
     text = _chat_complete(
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         model=WEB_MODEL,
         temperature=0.2,
-    )
-    return {"text": (text or "").strip(), "sources": []}
-
-def web_answer(
-    question: str,
-    allowed_domains: Optional[List[str]] = None,
-    context_size: Optional[str] = None,
-    location: Optional[Dict[str, str]] = None,
-    model: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Legacy helper (kept for compatibility)."""
-    if not _env_bool("ENABLE_WEB_SEARCH", True):
-        return {"text": "Web search is disabled.", "sources": []}
-
-    system = "You are concise and factual. Return ONLY the formatted answer. No links or citations."
-    prompt = _web_style_prompt(question, allowed_domains)
-    text = _chat_complete(
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        model=model or WEB_MODEL,
-        temperature=0.2,
+        timeout=20,  # extra tight for this path
     )
     return {"text": (text or "").strip(), "sources": []}

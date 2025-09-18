@@ -3,7 +3,7 @@ import re
 import csv
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List  # Python 3.9+ compatible type hints
+from typing import Optional, List
 
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
@@ -20,15 +20,13 @@ qdrant_url = os.getenv("QDRANT_URL")
 qdrant_key = (os.getenv("QDRANT_API_KEY") or "").strip()
 
 print(f"[boot] WEB_MODEL set to {wm if wm else '(default)'}")
-if wad:
-    print("[boot] WEB_ALLOWED_DOMAINS configured")
-if qdrant_url:
-    print("[boot] QDRANT_URL configured")
-if qdrant_key:
-    print(f"[boot] QDRANT_API_KEY loaded (length {len(qdrant_key)})")
+print("[boot] WEB_ALLOWED_DOMAINS configured" if wad else "[boot] WEB_ALLOWED_DOMAINS not set")
+print("[boot] QDRANT_URL configured" if qdrant_url else "[boot] QDRANT_URL not set")
+print(f"[boot] QDRANT_API_KEY loaded (length {len(qdrant_key)})" if qdrant_key else "[boot] QDRANT_API_KEY missing")
+print("[boot] OpenAI API key loaded" if (os.getenv("OPENAI_API_KEY") or "").strip() else "[boot] OpenAI API key MISSING")
 
 # Imports that use env
-from openai_integration import embed_text, chat_answer, web_answer_updated  # no secret logging inside
+from openai_integration import embed_text, chat_answer, web_answer_updated
 from qdrant_rest import search
 
 # ---- Asana integration (optional) ----
@@ -42,7 +40,6 @@ try:
     )
     print("[boot] Asana integration loaded")
 except Exception as _e:
-    # Safe fallbacks if the module isn't present/valid
     asana_available = lambda: False                          # type: ignore
     asana_answer = lambda q: "Asana integration disabled"    # type: ignore
     refresh_asana_cache = lambda force=True: []              # type: ignore
@@ -65,6 +62,10 @@ PORT = int(os.getenv("PORT", "8000"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")]
 ASANA_WORKSPACE_ID = (os.getenv("ASANA_WORKSPACE_ID") or "").strip()
 
+# ✅ Feature flags
+ENABLE_GA = _env_bool("ENABLE_GA", True)
+ENABLE_WEB_SEARCH = _env_bool("ENABLE_WEB_SEARCH", True)
+
 app = Flask(__name__)
 
 # CORS – allow your Netlify site and localhost
@@ -76,12 +77,11 @@ CORS(
             "methods": ["GET", "POST", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"],
             "supports_credentials": False,
-            "max_age": 86400,  # cache preflight for a day
+            "max_age": 86400,
         }
     },
 )
 
-SHOW_SOURCES = False
 TOP_K = int(os.getenv("TOP_K", "24"))
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "24000"))
 
@@ -93,9 +93,9 @@ GA_CSV = DATA_DIR / "ga_metrics.csv"
 # Secret redaction in error messages
 # ---------------------------
 _SECRET_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),          # OpenAI-like keys
-    re.compile(r"Bearer\s+[A-Za-z0-9\-_\.]{20,}"),  # Bearer tokens
-    re.compile(r"[A-Za-z0-9]{32,}"),                # long random tokens
+    re.compile(r"sk-[A-Za-z0-9\-_]{20,}"),
+    re.compile(r"Bearer\s+[A-Za-z0-9\-_\.]{20,}"),
+    re.compile(r"[A-Za-z0-9]{32,}"),
 ]
 
 def _sanitize_error_message(msg: str) -> str:
@@ -115,11 +115,8 @@ _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
 def _sanitize_answer_format(text: str, max_bullets: int = 5):
     if not text:
         return "", []
-    # remove [title](url) → keep title
     text = _MD_LINK_RE.sub(lambda m: m.group(1).strip(), text)
-    # remove raw URLs
     text = _URL_RE.sub("", text)
-    # remove parenthetical domains like (example.com)
     text = re.sub(r"\([a-z0-9\.\-]+\.com\)", "", text, flags=re.IGNORECASE)
 
     lines = [ln.rstrip() for ln in text.splitlines()]
@@ -175,7 +172,7 @@ def _hashtag_fallback() -> str:
     return "\n".join(bullets)
 
 # ---------------------------
-# GA fallback (CSV)
+# GA (CSV)
 # ---------------------------
 def _parse_int(val, default=0):
     try:
@@ -296,18 +293,31 @@ def _ga_daily_users(rows, days: int):
         return "I don’t have GA daily user data."
     return "\n".join(lines)
 
+# ✅ STRICT GA trigger — NEVER hijack non-GA queries
 def _maybe_answer_ga(q_lower: str) -> Optional[str]:
-    if not GA_CSV.exists():
-        return "I don’t have GA CSV data on this server yet."
-    ga_mention = ("ga" in q_lower) or ("google analytics" in q_lower) or ("analytics" in q_lower)
+    if not ENABLE_GA:
+        return None
+    # Only consider GA *if* user clearly asked about GA/Analytics
+    ga_mention = (
+        re.search(r"\bga\b", q_lower) is not None
+        or "google analytics" in q_lower
+        or re.search(r"\banalytics\b", q_lower) is not None
+    )
     if not ga_mention and not any(kw in q_lower for kw in [
-        "top countries", "top pages", "busiest", "total active users", "daily active users", "daily users"
+        "top countries", "top pages", "busiest",
+        "total active users", "daily active users", "daily users"
     ]):
         return None
-    days = 30 if "30" in q_lower or "last month" in q_lower else 7
+
+    # If the CSV isn't present, DO NOT hijack other routes
+    if not GA_CSV.exists():
+        return None
+
     rows = _load_ga_rows()
     if not rows:
-        return "I don’t have GA CSV data on this server yet."
+        return None
+
+    days = 30 if "30" in q_lower or "last month" in q_lower else 7
     if "top countries" in q_lower:
         return _ga_top_countries(rows, days)
     if "top pages" in q_lower:
@@ -321,99 +331,22 @@ def _maybe_answer_ga(q_lower: str) -> Optional[str]:
 # ---------------------------
 @app.get("/status")
 def status():
-    return jsonify({"ok": True, "asana": bool(asana_available())})
+    return jsonify({"ok": True, "asana": bool(asana_available()), "ga": ENABLE_GA, "web": ENABLE_WEB_SEARCH})
 
-@app.get("/")
-def home():
-    return (
-        """
-        <html>
-          <head><title>DataDepot API</title></head>
-          <body style="font-family: system-ui; max-width: 700px; margin: 40px auto; line-height:1.5">
-            <h1>DataDepot API is live ✅</h1>
-            <p>Try these endpoints:</p>
-            <ul>
-              <li><code>GET /status</code></li>
-              <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
-              <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
-              <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or set <code>ASANA_WORKSPACE_ID</code></li>
-              <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
-              <li><code>GET /diag/openai</code> — ping OpenAI path</li>
-              <li><code>GET /diag/web</code> — quick web formatter ping</li>
-              <li><code>GET /integrations/status</code> — check flags/files</li>
-            </ul>
-          </body>
-        </html>
-        """,
-        200,
-        {"Content-Type": "text/html"},
-    )
-
-# ---- Diagnostics & health ----
-@app.get("/diag/openai")
-def diag_openai():
-    from openai_integration import _chat_complete  # local import to avoid circulars
-    try:
-        txt = _chat_complete(
-            messages=[{"role": "system", "content": "You are a ping."},
-                      {"role": "user", "content": "reply with PONG only"}],
-            model=os.getenv("WEB_MODEL", "gpt-4o-mini"),
-            temperature=0.0,
-            timeout=30,
-        )
-        return jsonify({"ok": True, "reply": txt})
-    except Exception as e:
-        return jsonify({"ok": False, "error": _sanitize_error_message(str(e))}), 500
+@app.get("/diag/ga")
+def diag_ga():
+    return jsonify({
+        "enabled": ENABLE_GA,
+        "csv_present": GA_CSV.exists(),
+    })
 
 @app.get("/diag/web")
 def diag_web():
-    try:
-        allowed = None
-        wad = os.getenv("WEB_ALLOWED_DOMAINS")
-        if wad:
-            allowed = [d.strip() for d in wad.split(",") if d.strip()]
-        res = web_answer_updated("Give me the top 3 headlines (format only).", allowed_domains=allowed)
-        return jsonify({"ok": True, "snippet": (res.get("text","") or "")[:240]})
-    except Exception as e:
-        return jsonify({"ok": False, "error": _sanitize_error_message(str(e))}), 500
-
-@app.get("/integrations/status")
-def integrations_status():
     return jsonify({
-        "ok": True,
-        "asana_loaded": bool(asana_available()),
-        "ga_csv_present": GA_CSV.exists(),
-        "hashtags_csv_present": HASHTAGS_CSV.exists(),
-        "qdrant_url": bool(os.getenv("QDRANT_URL")),
-        "web_model": os.getenv("WEB_MODEL"),
-        "enable_web_search": _env_bool("ENABLE_WEB_SEARCH", True),
-        "cors_origins": CORS_ORIGINS,
+        "enabled": ENABLE_WEB_SEARCH,
+        "model": wm or "(default)"
     })
 
-# ---- Asana routes ----
-@app.get("/asana/workspaces")
-def asana_ws():
-    if not asana_available():
-        return jsonify({"error": "Asana not configured"}), 400
-    return jsonify({"workspaces": list_workspaces()})
-
-@app.get("/asana/projects")
-def asana_projects():
-    if not asana_available():
-        return jsonify({"error": "Asana not configured"}), 400
-    ws = request.args.get("workspace") or ASANA_WORKSPACE_ID
-    if not ws:
-        return jsonify({"error": "Missing ?workspace=<gid> and ASANA_WORKSPACE_ID not set"}), 400
-    return jsonify({"projects": list_projects(ws)})
-
-@app.post("/asana/refresh")
-def asana_refresh():
-    if not asana_available():
-        return jsonify({"error": "Asana not configured"}), 400
-    projs = refresh_asana_cache(force=True)
-    return jsonify({"ok": True, "projects": projs})
-
-# ---- Main /ask ----
 @app.post("/ask")
 def ask():
     try:
@@ -424,56 +357,65 @@ def ask():
 
         q_lower = q.lower()
 
-        # 1) Asana questions first (if PAT available)
-        if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project", "tasks"]):
-            ans = asana_answer(q)
-            clean_text, _ = _sanitize_answer_format(ans)
-            return jsonify({"answer": clean_text, "sources": []})
-
-        # 2) GA CSV answers
-        ga_try = _maybe_answer_ga(q_lower)
-        if ga_try:
-            return jsonify({"answer": ga_try, "sources": []})
-
-        # 3) Hashtag CSV fallback
-        if "hashtag" in q_lower or q_lower.startswith("#") or "hashtags" in q_lower:
-            fallback = _hashtag_fallback()
-            if fallback:
-                return jsonify({"answer": fallback, "sources": []})
-
-        # 3.5) Web-style answers (no live browsing; LLM-formatted news/analysis)
+        # 0) WEB first (explicit mode or “newsy” keywords) so GA can't preempt
         web_mode = str(data.get("mode") or "").lower() == "web"
         newsy = any(k in q_lower for k in ["news", "breaking", "today", "latest", "headline", "update"])
-        if _env_bool("ENABLE_WEB_SEARCH", True) and (web_mode or newsy):
+        if ENABLE_WEB_SEARCH and (web_mode or newsy):
+            print("[/ask] path=WEB")
             allowed = None
             wad_env = os.getenv("WEB_ALLOWED_DOMAINS")
             if wad_env:
                 allowed = [d.strip() for d in wad_env.split(",") if d.strip()]
-            wa = web_answer_updated(question=q, allowed_domains=allowed)  # {"text": "...", "sources": []}
-            clean_text, _ = _sanitize_answer_format(wa.get("text", ""))
-            if clean_text:
-                return jsonify({"answer": clean_text, "sources": wa.get("sources", [])})
+            try:
+                wa = web_answer_updated(question=q, allowed_domains=allowed)
+                clean_text, _ = _sanitize_answer_format(wa.get("text", ""))
+                if clean_text:
+                    return jsonify({"answer": clean_text, "sources": wa.get("sources", [])})
+            except Exception as e:
+                return jsonify({"error": _sanitize_error_message(str(e)), "answer": "", "sources": []}), 502
 
-        # 4) RAG search in Qdrant (guarded)
+        # 1) Asana (if PAT available)
+        if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project", "tasks"]):
+            print("[/ask] path=ASANA")
+            ans = asana_answer(q)
+            clean_text, _ = _sanitize_answer_format(ans)
+            return jsonify({"answer": clean_text, "sources": []})
+
+        # 2) GA (strict trigger, feature-flagged)
+        ga_try = _maybe_answer_ga(q_lower)
+        if ga_try is not None:
+            print("[/ask] path=GA")
+            return jsonify({"answer": ga_try, "sources": []})
+
+        # 3) Hashtags CSV
+        if "hashtag" in q_lower or q_lower.startswith("#") or "hashtags" in q_lower:
+            print("[/ask] path=HASHTAGS")
+            fallback = _hashtag_fallback()
+            if fallback:
+                return jsonify({"answer": fallback, "sources": []})
+
+        # 4) Qdrant RAG
+        print("[/ask] path=RAG")
         qvec = embed_text(q)
         try:
             hits = search(qvec, top_k=TOP_K)
-        except Exception as _e:
+        except Exception:
             hits = []
         chunks = [h.get("payload", {}).get("text", "") for h in hits if h.get("payload")]
         context = "\n\n---\n\n".join([c for c in chunks if c])[:MAX_CONTEXT_CHARS]
 
-        # 5) Grounded answer using context
         if context.strip():
-            raw_ans = (chat_answer(context, q, temperature=0.2) or "").strip()
-            clean_text, _ = _sanitize_answer_format(raw_ans)
-            return jsonify({"answer": clean_text, "sources": []})
+            try:
+                raw_ans = (chat_answer(context, q, temperature=0.2) or "").strip()
+                clean_text, _ = _sanitize_answer_format(raw_ans)
+                return jsonify({"answer": clean_text, "sources": []})
+            except Exception as e:
+                return jsonify({"error": _sanitize_error_message(str(e)), "answer": "", "sources": []}), 502
 
-        # 6) Nothing found
+        # 5) Nothing found
         return jsonify({"answer": "I don’t know from the current dataset.", "sources": []})
     except Exception as e:
         safe_msg = _sanitize_error_message(str(e))
-        # Return a generic, sanitized error to the client
         return jsonify({"error": f"{type(e).__name__}: {safe_msg}", "answer": "", "sources": []}), 500
 
 if __name__ == "__main__":
