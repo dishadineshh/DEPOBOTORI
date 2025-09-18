@@ -1,0 +1,264 @@
+date,country,page,activeUsers,eventCount
+20250806,India,/,17,145
+20250818,India,/,9,49
+20250805,India,/,7,58
+20250813,India,/,7,32
+20250807,India,/,6,34
+20250810,India,/,6,36
+20250811,India,/,6,26
+20250815,India,/,6,30
+20250828,India,/,6,31
+20250902,India,/,6,32
+20250806,India,/old-home,5,19
+20250822,India,/,5,40
+20250903,India,/,5,44
+20250805,India,/case-study/xo-curls,4,39
+20250812,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,4,15
+20250806,India,/case-study/xo-curls,3,38
+20250807,United States,/,3,11
+20250808,India,/,3,14
+20250809,India,/old-home,3,9
+20250811,United States,/,3,13
+20250811,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,3,11
+20250812,India,/,3,13
+20250814,India,/,3,20
+20250816,India,/,3,9
+20250817,India,/,3,15
+20250819,India,/,3,14
+20250821,India,/,3,15
+20250821,United States,/,3,14
+20250822,India,/blogs,3,26
+20250825,India,/,3,18
+20250829,India,/,3,11
+20250805,India,/case-study/even-health,2,6
+20250805,India,/case-study/somethings-brewing,2,11
+20250805,India,/home,2,77
+20250806,India,/blogs,2,6
+20250807,India,/case-study/rescript,2,9
+20250807,India,/old-home,2,6
+20250811,United Arab Emirates,/,2,9
+20250812,Canada,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,2,13
+20250815,Pakistan,/,2,11
+20250816,China,/,2,15
+20250819,United States,/,2,8
+20250820,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,2,9
+20250822,India,/blogs/how-ai-marketing-works-explained-simply-for-founders,2,4
+20250822,India,/blogs/what-is-an-ai-marketing-agency-a-beginners-guide-for-b2b-brands,2,9
+20250822,Ireland,/,2,8
+20250825,Singapore,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,2,11
+20250825,United States,/,2,7
+20250826,India,/,2,8
+20250826,Singapore,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,2,8
+20250829,India,/case-study/even-health,2,16
+20250829,Sweden,/,2,9
+20250829,United States,/,2,8
+20250901,India,/,2,16
+20250901,United States,/,2,7
+20250902,Germany,/,2,7
+20250902,India,/blogs/top-10-saas-marketing-agencies-in-2025,2,9
+20250903,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,2,9
+20250805,France,/,1,4
+20250805,India,/blogs,1,3
+20250805,India,/case-study/cbsl-group,1,2
+20250805,India,/case-study/women-and-climate-careers-in-india,1,3
+20250805,India,/home-copy,1,10
+20250805,Indonesia,/blogs/how-to-evaluate-case-studies-and-testimonials-for-a-digital-marketing-agency,1,4
+20250805,Nigeria,/,1,3
+20250805,United Kingdom,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250806,Canada,/,1,3
+20250806,Egypt,/blogs/good-books-great-quotes-for-digital-marketing-agencies,1,7
+20250806,Finland,/,1,9
+20250806,India,/blogs/how-sustainable-brands-can-get-marketing-right-in-2025,1,2
+20250806,India,/blogs/how-to-evaluate-case-studies-and-testimonials-for-a-digital-marketing-agency,1,3
+20250806,India,/blogs/rescript-boosts-brand-awareness-with-upload-digital-campaign-2,1,3
+20250806,India,/case-study/somethings-brewing,1,5
+20250806,India,/case-study/verthbox-2,1,3
+20250806,India,/case-study/women-and-climate-careers-in-india,1,3
+20250806,India,/home,1,2
+20250806,Thailand,/,1,4
+20250806,United Arab Emirates,/,1,5
+20250806,United Kingdom,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250806,United Kingdom,/blogs/how-sustainable-brands-can-get-marketing-right-in-2025,1,3
+20250806,United States,/,1,4
+20250807,Belarus,/,1,10
+20250807,India,/case-study/xo-curls,1,5
+20250807,India,/category/seo,1,4
+20250807,Ireland,/,1,3
+20250807,New Zealand,/,1,3
+20250807,Nigeria,/,1,3
+20250807,Singapore,/,1,4
+20250807,Sweden,/,1,4
+20250807,Thailand,/,1,3
+20250807,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250808,Canada,/blogs/why-your-business-needs-a-digital-marketing-agency-in-2025,1,3
+20250808,Spain,/,1,4
+20250808,Spain,/case-study/informa-connect-academy,1,1
+20250808,Spain,/category/social-media-marketing,1,1
+20250809,Egypt,/blogs/top-10-saas-marketing-agencies-in-2025,1,4
+20250809,Germany,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,5
+20250809,India,/,1,7
+20250809,United States,/,1,4
+20250809,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250810,India,/old-home,1,3
+20250810,United States,/,1,3
+20250811,India,/case-study/climate-hires,1,3
+20250811,India,/case-study/rescript,1,3
+20250811,India,/case-study/verthbox-2,1,2
+20250811,Serbia,/,1,4
+20250811,Sweden,/,1,3
+20250812,Australia,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250812,Brazil,/case-study/continuum-aviation,1,3
+20250812,Brazil,/case-study/the-earth-collective,1,3
+20250812,India,/blogs/on-page-vs-off-page-seo-whats-more-important-for-ranking,1,4
+20250812,India,/old-home,1,3
+20250812,United States,,1,3
+20250812,United States,/,1,3
+20250812,United States,/blogs,1,3
+20250812,United States,/old-home,1,3
+20250813,Germany,/,1,4
+20250813,India,/blogs,1,3
+20250813,India,/case-study/informa-connect-academy,1,4
+20250813,United Arab Emirates,/,1,5
+20250813,United States,/,1,3
+20250813,United States,/blogs/red-flags-to-avoid-when-selecting-digital-marketing-services,1,4
+20250814,Canada,/,1,4
+20250814,India,/case-study/rescript,1,2
+20250814,India,/case-study/the-earth-collective,1,3
+20250814,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250815,India,/blogs,1,3
+20250815,India,/blogs/how-ai-marketing-works-explained-simply-for-founders,1,3
+20250815,India,/blogs/what-is-an-ai-marketing-agency-a-beginners-guide-for-b2b-brands,1,3
+20250815,Ireland,/,1,4
+20250815,Philippines,/,1,3
+20250815,Philippines,/blogs/top-10-saas-marketing-agencies-in-2025,1,4
+20250815,South Africa,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250815,Sweden,/,1,5
+20250815,United States,/,1,4
+20250816,India,/case-study/rescript,1,3
+20250816,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,5
+20250818,Finland,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250818,India,/blogs,1,2
+20250818,India,/blogs/best-practices-from-the-top-digital-marketing-agencies-and-companies-in-2025,1,2
+20250818,India,/blogs/beyond-rankings-the-seo-execution-formula-trusted-by-the-best-digital-marketing-agencies,1,2
+20250818,India,/blogs/how-ai-marketing-works-explained-simply-for-founders,1,3
+20250818,India,/blogs/top-10-saas-marketing-agencies-in-2025,1,7
+20250818,India,/blogs/what-is-an-ai-marketing-agency-a-beginners-guide-for-b2b-brands,1,2
+20250818,India,/case-study/the-earth-collective,1,3
+20250818,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250819,Australia,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,5
+20250819,India,/blogs/why-your-business-needs-a-digital-marketing-agency-in-2025,1,4
+20250819,Ireland,/,1,4
+20250819,Pakistan,/,1,3
+20250819,Sweden,/,1,4
+20250820,Bangladesh,/,1,5
+20250820,Canada,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250820,Pakistan,/,1,5
+20250820,Singapore,/,1,4
+20250821,Australia,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250821,Germany,/blogs/how-to-evaluate-case-studies-and-testimonials-for-a-digital-marketing-agency,1,3
+20250821,India,/case-study/even-health,1,3
+20250821,India,/case-study/rescript,1,2
+20250821,India,/case-study/somethings-brewing,1,2
+20250821,India,/case-study/women-and-climate-careers-in-india,1,2
+20250821,India,/case-study/xo-curls,1,2
+20250821,United States,/blogs,1,5
+20250821,United States,/blogs/best-practices-from-the-top-digital-marketing-agencies-and-companies-in-2025,1,5
+20250821,United States,/blogs/beyond-rankings-the-seo-execution-formula-trusted-by-the-best-digital-marketing-agencies,1,5
+20250821,United States,/blogs/content-marketing-agency-jargon-decoded-a-fun-guide-for-business-owners,1,5
+20250821,United States,/blogs/content-marketing-tips-beyond-likes-and-shares-the-real-impact-of-social-media,1,5
+20250821,United States,/blogs/content-marketing-trends-2024-digital-marketing-tips-for-businesses,1,5
+20250821,United States,/blogs/rescript-boosts-brand-awareness-with-upload-digital-campaign,1,5
+20250821,United States,/blogs/rescript-boosts-brand-awareness-with-upload-digital-campaign-2,1,5
+20250821,United States,/blogs/rescript-boosts-brand-awareness-with-upload-digital-campaign-3,1,5
+20250821,United States,/blogs/rescript-elevates-brand-awareness-through-digital-marketing-campaign-with-upload-digital,1,5
+20250821,United States,/case-study/beyos,1,5
+20250821,United States,/case-study/cbsl-group,1,5
+20250821,United States,/case-study/climate-hires,1,5
+20250821,United States,/case-study/continuum-aviation,1,5
+20250821,United States,/case-study/fireflies,1,5
+20250821,United States,/case-study/informa-connect-academy,1,5
+20250821,United States,/case-study/rescript,1,5
+20250821,United States,/case-study/the-earth-collective,1,5
+20250821,United States,/case-study/verthbox-2,1,5
+20250821,United States,/category/brandign,1,5
+20250821,United States,/category/email-marketing,1,5
+20250821,United States,/category/seo,1,5
+20250821,United States,/category/social-media-marketing,1,5
+20250821,United States,/category/ui-ux,1,5
+20250821,Uruguay,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250822,Cayman Islands,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,5
+20250822,India,/blogs/beyond-rankings-the-seo-execution-formula-trusted-by-the-best-digital-marketing-agencies,1,2
+20250822,India,/blogs/essential-questions-to-ask-before-hiring-a-digital-marketing-agency,1,4
+20250822,India,/blogs/how-to-evaluate-case-studies-and-testimonials-for-a-digital-marketing-agency,1,4
+20250822,India,/blogs/proven-strategies-from-our-experiments-for-your-own-marketing-success,1,3
+20250822,India,/blogs/red-flags-to-avoid-when-selecting-digital-marketing-services,1,2
+20250822,India,/blogs/the-ultimate-guide-to-choosing-a-digital-marketing-agency,1,4
+20250822,India,/blogs/top-10-saas-marketing-agencies-in-2025,1,6
+20250822,India,/blogs/why-your-business-needs-a-digital-marketing-agency-in-2025,1,2
+20250822,India,/upgrade-my-website,1,7
+20250822,Philippines,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250822,Sweden,/,1,3
+20250822,United States,/,1,4
+20250823,India,/,1,6
+20250823,United States,/blogs/top-10-saas-marketing-agencies-in-2025,1,4
+20250824,Australia,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,11
+20250825,Germany,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250825,India,/case-study/verthbox-2,1,3
+20250825,Ireland,/,1,5
+20250825,Latvia,/blogs/essential-questions-to-ask-before-hiring-a-digital-marketing-agency,1,4
+20250826,Armenia,/,1,7
+20250826,Sweden,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250827,Pakistan,/blogs/on-page-vs-off-page-seo-whats-more-important-for-ranking,1,7
+20250827,Sweden,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,7
+20250827,United States,/,1,3
+20250827,United States,/blogs/top-10-saas-marketing-agencies-in-2025,1,4
+20250828,(not set),/blogs/what-is-an-ai-marketing-agency-a-beginners-guide-for-b2b-brands,1,6
+20250828,India,/blogs,1,2
+20250828,India,/case-study/cbsl-group,1,4
+20250828,India,/case-study/climate-hires,1,4
+20250828,India,/case-study/even-health,1,3
+20250828,India,/case-study/somethings-brewing,1,3
+20250828,India,/case-study/women-and-climate-careers-in-india,1,4
+20250828,India,/case-study/xo-curls,1,7
+20250829,(not set),/,1,3
+20250829,Egypt,/blogs/top-10-saas-marketing-agencies-in-2025,1,3
+20250829,Germany,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,5
+20250829,India,/blogs/5-viral-marketing-campaigns-that-broke-the-internet-lessons-and-digital-marketing-tips,1,4
+20250829,India,/blogs/rescript-elevates-brand-awareness-through-digital-marketing-campaign-with-upload-digital,1,3
+20250829,India,/case-study/somethings-brewing,1,1
+20250829,India,/case-study/women-and-climate-careers-in-india,1,1
+20250829,India,/case-study/xo-curls,1,1
+20250829,United Kingdom,/,1,4
+20250830,China,/,1,3
+20250831,Estonia,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,3
+20250831,United Kingdom,/,1,3
+20250831,United States,/blogs/top-10-saas-marketing-agencies-in-2025,1,4
+20250901,(not set),/,1,3
+20250901,Germany,/,1,4
+20250901,India,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,6
+20250901,India,/case-studies/even-health,1,3
+20250901,India,/case-studies/jetapult,1,2
+20250901,India,/case-studies/kind-hub,1,3
+20250901,India,/case-studies/somethings-brewing,1,2
+20250901,India,/case-studies/women-and-climate-careers-in-india,1,3
+20250901,India,/case-studies/women-emerging,1,3
+20250901,India,/case-studies/xo-curls,1,3
+20250901,Ireland,/,1,4
+20250901,Singapore,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250901,Sweden,/,1,3
+20250901,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,10
+20250902,India,/blogs,1,18
+20250902,India,/blogs/should-every-brand-do-meme-marketing-we-hope-not,1,9
+20250902,Netherlands,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,6
+20250902,Philippines,/blogs/red-flags-to-avoid-when-selecting-digital-marketing-services,1,4
+20250902,Singapore,/,1,3
+20250902,United States,/,1,4
+20250902,United States,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,1,4
+20250902,United States,/blogs/top-10-saas-marketing-agencies-in-2025,1,4
+20250903,India,/case-studies/even-health,1,1
+20250903,India,/case-studies/somethings-brewing,1,2
+20250806,India,/case-study/fireflies,0,2
+20250811,India,/case-study/fireflies,0,2
+20250816,Germany,/blogs/are-we-hitting-rock-bottom-with-rage-bait-marketing,0,8
+20250820,India,/case-study/fireflies,0,2
+20250827,India,/case-study/fireflies,0,2
