@@ -40,6 +40,7 @@ try:
     )
     print("[boot] Asana integration loaded")
 except Exception as _e:
+    # Safe fallbacks if the module isn't present/valid
     asana_available = lambda: False                          # type: ignore
     asana_answer = lambda q: "Asana integration disabled"    # type: ignore
     refresh_asana_cache = lambda force=True: []              # type: ignore
@@ -115,8 +116,11 @@ _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
 def _sanitize_answer_format(text: str, max_bullets: int = 5):
     if not text:
         return "", []
+    # remove [title](url) → keep title
     text = _MD_LINK_RE.sub(lambda m: m.group(1).strip(), text)
+    # remove raw URLs
     text = _URL_RE.sub("", text)
+    # remove parenthetical domains like (example.com)
     text = re.sub(r"\([a-z0-9\.\-]+\.com\)", "", text, flags=re.IGNORECASE)
 
     lines = [ln.rstrip() for ln in text.splitlines()]
@@ -155,24 +159,78 @@ def _sanitize_answer_format(text: str, max_bullets: int = 5):
     return clean_text, []
 
 # ---------------------------
-# Hashtag fallback (CSV)
+# Instagram Hashtags (CSV)
 # ---------------------------
-def _hashtag_fallback() -> str:
+def _load_hashtags_rows():
+    rows = []
     if not HASHTAGS_CSV.exists():
-        return ""
-    bullets = []
+        return rows
     with HASHTAGS_CSV.open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            tag = (row.get("hashtag") or "").strip()
+        rdr = csv.DictReader(f)
+        for raw in rdr:
+            tag = (raw.get("hashtag") or raw.get("tag") or "").strip()
             if not tag:
                 continue
-            freq = (row.get("freq") or row.get("count") or "").strip()
-            bullets.append(f"• {tag} (frequency: {freq})" if freq else f"• {tag}")
-    return "\n".join(bullets)
+            if tag.startswith("#"):
+                tag = tag[1:]
+            freq = raw.get("freq") or raw.get("count") or raw.get("frequency") or ""
+            try:
+                freq_val = int(str(freq).replace(",", "").strip() or "0")
+            except Exception:
+                freq_val = 0
+            rows.append({"hashtag": tag, "freq": freq_val})
+    return rows
+
+def _hashtags_top(n: int = 10) -> str:
+    rows = _load_hashtags_rows()
+    if not rows:
+        return "I don’t have an Instagram hashtags CSV on this server yet."
+    top = sorted(rows, key=lambda r: r["freq"], reverse=True)[: max(1, n)]
+    lines = [f"**Top {len(top)} hashtags**"]
+    for r in top:
+        lines.append(f"• #{r['hashtag']} — {r['freq']}")
+    return "\n".join(lines)
+
+def _hashtags_trending() -> str:
+    return _hashtags_top(10)
+
+def _hashtags_suggest(query: str, limit: int = 12) -> str:
+    rows = _load_hashtags_rows()
+    if not rows:
+        return "I don’t have an Instagram hashtags CSV on this server yet."
+    q = (query or "").lower().strip()
+    topic = q
+    for sep in ["for ", "relevant for ", "about ", "on "]:
+        if sep in q:
+            topic = q.split(sep, 1)[1]
+            break
+    kws = [w for w in re.split(r"[^a-z0-9]+", topic) if w]
+    if not kws:
+        return _hashtags_top(limit)
+    scored = []
+    for r in rows:
+        tag_l = r["hashtag"].lower()
+        score = sum(1 for k in kws if k in tag_l)
+        if score > 0:
+            scored.append((score, r))
+    if not scored:
+        return _hashtags_top(limit)
+    scored.sort(key=lambda x: (x[0], x[1]["freq"]), reverse=True)
+    picked = [r for _, r in scored[:limit]]
+    lines = [f"**Suggested hashtags (topic: {topic})**"]
+    for r in picked:
+        lines.append(f"• #{r['hashtag']} — {r['freq']}")
+    return "\n".join(lines)
+
+def _hashtags_any() -> str:
+    rows = _load_hashtags_rows()
+    if not rows:
+        return "I don’t have an Instagram hashtags CSV on this server yet."
+    rows = sorted(rows, key=lambda r: r["freq"], reverse=True)[:50]
+    return "\n".join([f"• #{r['hashtag']} — {r['freq']}" for r in rows])
 
 # ---------------------------
-# GA (CSV)
+# GA fallback (CSV)
 # ---------------------------
 def _parse_int(val, default=0):
     try:
@@ -331,7 +389,60 @@ def _maybe_answer_ga(q_lower: str) -> Optional[str]:
 # ---------------------------
 @app.get("/status")
 def status():
-    return jsonify({"ok": True, "asana": bool(asana_available()), "ga": ENABLE_GA, "web": ENABLE_WEB_SEARCH})
+    return jsonify({
+        "ok": True,
+        "asana": bool(asana_available()),
+        "ga": ENABLE_GA,
+        "web": ENABLE_WEB_SEARCH
+    })
+
+@app.get("/")
+def home():
+    return (
+        """
+        <html>
+          <head><title>DataDepot API</title></head>
+          <body style="font-family: system-ui; max-width: 700px; margin: 40px auto; line-height:1.5">
+            <h1>DataDepot API is live ✅</h1>
+            <p>Try these endpoints:</p>
+            <ul>
+              <li><code>GET /status</code></li>
+              <li><code>GET /diag/web</code> — web formatter diag</li>
+              <li><code>GET /diag/ga</code> — GA CSV diag</li>
+              <li><code>GET /diag/hashtags</code> — Instagram hashtags CSV diag</li>
+              <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
+              <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
+              <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or set <code>ASANA_WORKSPACE_ID</code></li>
+              <li><code>POST /asana/refresh</code> — refresh Asana cache</li>
+            </ul>
+          </body>
+        </html>
+        """,
+        200,
+        {"Content-Type": "text/html"},
+    )
+
+@app.get("/asana/workspaces")
+def asana_ws():
+    if not asana_available():
+        return jsonify({"error": "Asana not configured"}), 400
+    return jsonify({"workspaces": list_workspaces()})
+
+@app.get("/asana/projects")
+def asana_projects():
+    if not asana_available():
+        return jsonify({"error": "Asana not configured"}), 400
+    ws = request.args.get("workspace") or ASANA_WORKSPACE_ID
+    if not ws:
+        return jsonify({"error": "Missing ?workspace=<gid> and ASANA_WORKSPACE_ID not set"}), 400
+    return jsonify({"projects": list_projects(ws)})
+
+@app.post("/asana/refresh")
+def asana_refresh():
+    if not asana_available():
+        return jsonify({"error": "Asana not configured"}), 400
+    projs = refresh_asana_cache(force=True)
+    return jsonify({"ok": True, "projects": projs})
 
 @app.get("/diag/ga")
 def diag_ga():
@@ -345,6 +456,13 @@ def diag_web():
     return jsonify({
         "enabled": ENABLE_WEB_SEARCH,
         "model": wm or "(default)"
+    })
+
+@app.get("/diag/hashtags")
+def diag_hashtags():
+    return jsonify({
+        "csv_present": HASHTAGS_CSV.exists(),
+        "count": len(_load_hashtags_rows())
     })
 
 @app.post("/ask")
@@ -372,9 +490,10 @@ def ask():
                 if clean_text:
                     return jsonify({"answer": clean_text, "sources": wa.get("sources", [])})
             except Exception as e:
+                # Return a fast, sanitized error instead of letting the request hang
                 return jsonify({"error": _sanitize_error_message(str(e)), "answer": "", "sources": []}), 502
 
-        # 1) Asana (if PAT available)
+        # 1) Asana questions first (if PAT available)
         if asana_available() and any(k in q_lower for k in ["asana", "task", "ticket", "project", "tasks"]):
             print("[/ask] path=ASANA")
             ans = asana_answer(q)
@@ -387,14 +506,18 @@ def ask():
             print("[/ask] path=GA")
             return jsonify({"answer": ga_try, "sources": []})
 
-        # 3) Hashtags CSV
+        # 3) Instagram Hashtags (CSV)
         if "hashtag" in q_lower or q_lower.startswith("#") or "hashtags" in q_lower:
             print("[/ask] path=HASHTAGS")
-            fallback = _hashtag_fallback()
-            if fallback:
-                return jsonify({"answer": fallback, "sources": []})
+            if "top" in q_lower:
+                return jsonify({"answer": _hashtags_top(), "sources": []})
+            if "trending" in q_lower:
+                return jsonify({"answer": _hashtags_trending(), "sources": []})
+            if "suggest" in q_lower or "relevant" in q_lower or "for " in q_lower:
+                return jsonify({"answer": _hashtags_suggest(q), "sources": []})
+            return jsonify({"answer": _hashtags_any(), "sources": []})
 
-        # 4) Qdrant RAG
+        # 4) RAG search in Qdrant
         print("[/ask] path=RAG")
         qvec = embed_text(q)
         try:
@@ -404,6 +527,7 @@ def ask():
         chunks = [h.get("payload", {}).get("text", "") for h in hits if h.get("payload")]
         context = "\n\n---\n\n".join([c for c in chunks if c])[:MAX_CONTEXT_CHARS]
 
+        # 5) Grounded answer using context
         if context.strip():
             try:
                 raw_ans = (chat_answer(context, q, temperature=0.2) or "").strip()
@@ -412,10 +536,11 @@ def ask():
             except Exception as e:
                 return jsonify({"error": _sanitize_error_message(str(e)), "answer": "", "sources": []}), 502
 
-        # 5) Nothing found
+        # 6) Nothing found
         return jsonify({"answer": "I don’t know from the current dataset.", "sources": []})
     except Exception as e:
         safe_msg = _sanitize_error_message(str(e))
+        # Return a generic, sanitized error to the client
         return jsonify({"error": f"{type(e).__name__}: {safe_msg}", "answer": "", "sources": []}), 500
 
 if __name__ == "__main__":
