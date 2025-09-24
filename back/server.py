@@ -544,17 +544,31 @@ def ask():
         # 3.5) Gmail (read-only), simple intents
         if ENABLE_GMAIL and any(k in q_lower for k in ["gmail", "email", "inbox", "unread", "from:", "subject:", "is:unread", "newer_than:", "older_than:"]):
             print("[/ask] path=GMAIL")
-            gmail_filter_parts: List[str] = []
-            if "unread" in q_lower:
+
+            # Build a clean Gmail query string
+            q_raw = (data.get("question") or "").strip()
+            # Remove filler tokens that break Gmail search
+            q_clean = re.sub(r"\b(gmail|email|inbox)\b", "", q_raw, flags=re.I).strip()
+
+            gmail_filter_parts = []
+            if "unread" in q_lower and not re.search(r"\bis:unread\b", q_clean, flags=re.I):
                 gmail_filter_parts.append("is:unread")
-            # If the user included operators, pass the whole query through so Gmail parses it
-            for op in ["from:", "subject:", "newer_than:", "older_than:"]:
-                if op in q_lower:
-                    gmail_filter_parts = [q]
-                    break
-            q_expr = " ".join(gmail_filter_parts)
+
+            # If user already provided Gmail operators, prefer their string
+            has_ops = any(op in q_clean.lower() for op in ["from:", "subject:", "newer_than:", "older_than:", "after:", "before:", "in:"])
+            if has_ops:
+                q_expr = q_clean
+            else:
+                # No explicit operator — use whatever we collected (e.g. is:unread) or default to last 7d
+                q_expr = " ".join(gmail_filter_parts).strip()
+                if not q_expr:
+                    q_expr = "newer_than:7d"
+
             try:
                 txt = gmail_quick_summary(limit=5, q=q_expr)
+                # If nothing came back, retry with in:anywhere to search all system labels
+                if "(no messages)" in (txt or "").lower() and "in:" not in q_expr.lower():
+                    txt = gmail_quick_summary(limit=5, q=(q_expr + " in:anywhere").strip())
                 clean_text, _ = _sanitize_answer_format(txt)
                 return jsonify({"answer": clean_text, "sources": []})
             except Exception as e:
