@@ -29,6 +29,18 @@ print("[boot] OpenAI API key loaded" if (os.getenv("OPENAI_API_KEY") or "").stri
 from openai_integration import embed_text, chat_answer, web_answer_updated
 from qdrant_rest import search
 
+# ---- Gmail (read-only helper) ----
+# expects gmail_client.py with quick_summary(limit:int, q:str) -> str
+try:
+    from gmail_client import quick_summary as gmail_quick_summary  # type: ignore
+    _gmail_loaded = True
+    print("[boot] Gmail client loaded")
+except Exception as _e:
+    _gmail_loaded = False
+    def gmail_quick_summary(*args, **kwargs):  # type: ignore
+        raise RuntimeError("Gmail client not available")
+    print(f"[boot] Gmail client NOT loaded ({type(_e).__name__})")
+
 # ---- Asana integration (optional) ----
 try:
     from asana_integration import (
@@ -66,6 +78,7 @@ ASANA_WORKSPACE_ID = (os.getenv("ASANA_WORKSPACE_ID") or "").strip()
 # ✅ Feature flags
 ENABLE_GA = _env_bool("ENABLE_GA", True)
 ENABLE_WEB_SEARCH = _env_bool("ENABLE_WEB_SEARCH", True)
+ENABLE_GMAIL = _env_bool("ENABLE_GMAIL", True) and _gmail_loaded  # only true if client import succeeded
 
 app = Flask(__name__)
 
@@ -410,6 +423,7 @@ def home():
               <li><code>GET /diag/web</code> — web formatter diag</li>
               <li><code>GET /diag/ga</code> — GA CSV diag</li>
               <li><code>GET /diag/hashtags</code> — Instagram hashtags CSV diag</li>
+              <li><code>GET /diag/gmail</code> — Gmail connectivity diag</li>
               <li><code>POST /ask</code> with JSON: <code>{"question": "Hello"}</code></li>
               <li><code>GET /asana/workspaces</code> — if ASANA_PAT is set</li>
               <li><code>GET /asana/projects?workspace=&lt;gid&gt;</code> — or set <code>ASANA_WORKSPACE_ID</code></li>
@@ -465,6 +479,16 @@ def diag_hashtags():
         "count": len(_load_hashtags_rows())
     })
 
+@app.get("/diag/gmail")
+def diag_gmail():
+    if not ENABLE_GMAIL:
+        return jsonify({"ok": False, "error": "Gmail disabled or client not loaded"})
+    try:
+        txt = gmail_quick_summary(limit=1, q="")
+        return jsonify({"ok": True, "sample": (txt or "")[:300]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": _sanitize_error_message(str(e))})
+
 @app.post("/ask")
 def ask():
     try:
@@ -516,6 +540,25 @@ def ask():
             if "suggest" in q_lower or "relevant" in q_lower or "for " in q_lower:
                 return jsonify({"answer": _hashtags_suggest(q), "sources": []})
             return jsonify({"answer": _hashtags_any(), "sources": []})
+
+        # 3.5) Gmail (read-only), simple intents
+        if ENABLE_GMAIL and any(k in q_lower for k in ["gmail", "email", "inbox", "unread", "from:", "subject:", "is:unread", "newer_than:", "older_than:"]):
+            print("[/ask] path=GMAIL")
+            gmail_filter_parts: List[str] = []
+            if "unread" in q_lower:
+                gmail_filter_parts.append("is:unread")
+            # If the user included operators, pass the whole query through so Gmail parses it
+            for op in ["from:", "subject:", "newer_than:", "older_than:"]:
+                if op in q_lower:
+                    gmail_filter_parts = [q]
+                    break
+            q_expr = " ".join(gmail_filter_parts)
+            try:
+                txt = gmail_quick_summary(limit=5, q=q_expr)
+                clean_text, _ = _sanitize_answer_format(txt)
+                return jsonify({"answer": clean_text, "sources": []})
+            except Exception as e:
+                return jsonify({"answer": "", "error": _sanitize_error_message(str(e)), "sources": []}), 502
 
         # 4) RAG search in Qdrant
         print("[/ask] path=RAG")
